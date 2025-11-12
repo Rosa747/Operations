@@ -37,8 +37,12 @@ def create_routes():
 
     return R
 
+def routes_with_edge(edge):
+    return R.loc[R["edges"].apply(lambda edge_list: edge in edge_list), "name"].tolist()
+
 # TODO functie die lengths per edges geeft
 # Because I use:  L[(u, v)]
+
 
 R = create_routes()
 
@@ -55,23 +59,37 @@ P = pd.DataFrame([{ "id": "AC1", "A/D": "A", "ETD": pd.Timestamp("2024-06-01 10:
                     { "id": "AC2", "A/D": "D", "PBT": pd.Timestamp("2024-06-01 10:00:00")}])
 R = range(n_routes)
 
-
-# Set of nodes in each route #TODO hoe definieren we welke AC welke route mag nemen?
-for i in P:
-    Ypsilon = {r: R["route"][r] for r in range(n_routes)}
-# Set of edges in each route #TODO hoe definieren we welke AC welke route mag nemen?
-for i in P:
-    Lambda = {r: [(R["route"][r][k], R["route"][r][k+1]) for k in range(len(R["route"][r])-1)] for r in range(n_routes)}
+A = P.loc[]
 
 
-#TODO:
-# edge_routes is list of route IDs that include edge u,v
-edge_routes = {
-(u,v): [r for r in R if any(R_nodes[r][k]==u and R_nodes[r][k+1]==v for k in range(len(R_nodes[r])-1))]
-for (u,v) in E}
+# # Set of nodes in each route #TODO hoe definieren we welke AC welke route mag nemen?
+# for i in P:
+#     Ypsilon = {r: R["route"][r] for r in range(n_routes)}
+# # Set of edges in each route #TODO hoe definieren we welke AC welke route mag nemen?
+# for i in P:
+#     Lambda = {r: [(R["route"][r][k], R["route"][r][k+1]) for k in range(len(R["route"][r])-1)] for r in range(n_routes)}
 
 
+# #TODO:
+# # edge_routes is list of route IDs that include edge u,v
+# edge_routes = {
+# (u,v): [r for r in R if any(R_nodes[r][k]==u and R_nodes[r][k+1]==v for k in range(len(R_nodes[r])-1))]
+# for (u,v) in E}
 
+
+    
+sep_t = pd.DataFrame({"type": ["small", "large", "heavy", "B757"], 
+                      "small": [59, 59, 59, 59], 
+                      "large": [88, 61, 61, 61], 
+                      "heavy": [109, 109, 90, 109], 
+                      "B757": [110, 91, 91, 91]})
+
+sep_m = pd.DataFrame({"type": ["small", "large", "heavy", "B757"], 
+                      "small": [40, 45, 55, 60], 
+                      "large": [45, 50, 60, 65], 
+                      "heavy": [55, 60, 70, 75], 
+                      "B757": [60, 65, 75, 80]})
+print(sep_t)
 # Create a simple model
 model = gp.Model("test")
 
@@ -164,7 +182,24 @@ model.addConstrs(
 (t[i, routes[i][-1]] >= PBT[i] for i in A_departure),
 name="departure_time_window")
 
-# Constraint 17:
+# Constraint 17,18 are not linearized: constraint 19,20 are linearized version
+# Constraint 19: max taxi speed
+model.addConstrs(
+    (t[i, v] - t[i, u] >= routes_with_edge((u, v)) / Suv_max
+     - M * (1 - gp.quicksum(Gamma[i, r] for r in edge_routes[(u, v)]))
+     for i in A for (u, v) in E),
+    name="taxi_speed_lower"
+)
+
+# Constraint 20: chosen not to be constrained by min taxi speed
+
+# Constraint 21,22 are non-linear
+# Constraint 23
+
+
+
+ra dna deziraenil era 81/enil-non :71 71tniartno
+# Constraint 19:
 model.addConstrs(
     (t[i, v] - t[i, u] >= L[(u, v)] / Suv_max
      - M * (1 - gp.quicksum(Gamma[i, r] for r in edge_routes[(u, v)]))
@@ -172,13 +207,7 @@ model.addConstrs(
     name="taxi_speed_lower"
 )
 
-# Constraint 18:
-model.addConstrs(
-    (t[i, v] - t[i, u] <= L[(u, v)] / Suv_min
-     + M * (1 - gp.quicksum(Gamma[i, r] for r in edge_routes[(u, v)]))
-     for i in A for (u, v) in E),
-    name="taxi_speed_upper"
-)
+# Constraint 20: 
 
 # Optimize
 model.optimize()
