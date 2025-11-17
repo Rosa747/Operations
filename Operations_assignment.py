@@ -6,7 +6,6 @@ import pandas as pd
 
 nodes_df = pd.read_excel('Node_operations.xlsx')
 
-print(nodes_df.head())
 
 def create_routes():
 
@@ -30,9 +29,9 @@ def create_routes():
         return pairs if directed else [set(p) for p in pairs]
 
     R = pd.DataFrame([
-        {"name": "route_arr_1a", "route": route_arr_1a, "edges": edges(route_arr_1a, directed=True)},
-        {"name": "route_arr_1b", "route": route_arr_1b, "edges": edges(route_arr_1b, directed=True)},
-        {"name": "route_dep_1",  "route": route_dep_1,  "edges": edges(route_dep_1, directed=True)},
+        {"name": "route_arr_1a", "A/D": "A", "route": route_arr_1a, "edges": edges(route_arr_1a, directed=True)},
+        {"name": "route_arr_1b", "A/D": "A", "route": route_arr_1b, "edges": edges(route_arr_1b, directed=True)},
+        {"name": "route_dep_1",  "A/D": "D", "route": route_dep_1,  "edges": edges(route_dep_1, directed=True)},
     ])
 
     return R
@@ -42,12 +41,19 @@ nodes = nodes_df["name"].tolist()
 def routes_with_edge(edge):
     return R.loc[R["edges"].apply(lambda edge_list: edge in edge_list), "name"].tolist()
 
+def find_separation(leading_ac, trailing_ac):
+    return Sep.loc[P.loc[P['id'] == trailing_ac, 'WTC'], P.loc[P['id'] == leading_ac, 'WTC']]
 
+def length_edge(edge):
+    u, v = edge
+    delta_x = nodes_df.loc[nodes_df['name'] == v, 'x'].values[0] - nodes_df.loc[nodes_df['name'] == u, 'x'].values[0]
+    delta_y = nodes_df.loc[nodes_df['name'] == v, 'y'].values[0] - nodes_df.loc[nodes_df['name'] == u, 'y'].values[0]
+    length = np.sqrt(delta_x ** 2 + delta_y ** 2)
+    return length
 
-# TODO functie die lengths per edges geeft
-# Because I use:  L[(u, v)]
-
-# TODO we need N where N_i^p is the pth route for aircraft i, where that then is a list of nodes in sequence of the route
+# TODO redefine route1 and route2 to set of all possible routes for ac i and ac j
+# def get_common_nodes(route1, route2):
+#     return list(set(route1) & set(route2))
 
 
 R = create_routes()
@@ -62,19 +68,36 @@ n_routes = 3  # number of possible routes
 M = 1e4
 Suv_max = 30 * 0.514444 #max speed in m/s
 e_l = 3 #edge capacity for all runway exits
-Tidep = 55
+Tidep = 55 #departure time interval in seconds for all D
 
 # Index set for aircraft
 # Set of aircraft
-P = pd.DataFrame([{ "id": "AC1", "A/D": "A", "ETD": pd.Timestamp("2024-06-01 10:00:00")},
-                  { "id": "AC3", "A/D": "A", "ETD": pd.Timestamp("2024-06-01 10:00:00")}, 
-                    { "id": "AC2", "A/D": "D", "PBT": pd.Timestamp("2024-06-01 10:00:00")}])
-R = range(n_routes)
+P = pd.DataFrame([{ "id": "AC1", "A/D": "A", "ETD": pd.Timestamp("2024-06-01 10:00:00"), "WTC": "large"},
+                  { "id": "AC2", "A/D": "A", "ETD": pd.Timestamp("2024-06-01 10:00:00"), "WTC": "large"}, 
+                    { "id": "AC3", "A/D": "D", "PBT": pd.Timestamp("2024-06-01 10:00:00"), "WTC": "large"}])
 
+
+# TODO we need N where N_i^p is the pth route for aircraft i, where that then is a list of nodes in sequence of the route
+for aircraft in P:
+    if aircraft["A/D"] == "A":
+        P[aircraft]["routes"] = [R[i]["route"] for i in R.loc[ R["A/D"] == "A" ]]
+
+    elif aircraft["A/D"] == "D":
+        P[aircraft]["routes"] = [R[i]["route"] for i in R.loc[ R["A/D"] == "D" ]]
+    
+
+# Create subsets of aircraft
 A = P.loc[ P["A/D"] == "A"]["id"].to_list()
+D = P.loc[ P["A/D"] == "D"]["id"].to_list()
+P_list = P["id"].to_list()
 print(A)
 
+# Create subsets of nodes
+a = ["l3", "l4", "l5", "l6"]  # left side arrival runway exits
+b = ["p2", "p3", "p4", "p5"]  # right side arrival runway exits
+c = ["a1", "a2", "a3", "a4"]  # departure runway entries
 
+# TODO subset of edges: L = all exit taxi edges
 
 
 # # Set of nodes in each route #TODO hoe definieren we welke AC welke route mag nemen?
@@ -91,36 +114,37 @@ print(A)
 # (u,v): [r for r in R if any(R_nodes[r][k]==u and R_nodes[r][k+1]==v for k in range(len(R_nodes[r])-1))]
 # for (u,v) in E}
     
-sep_t = pd.DataFrame({"type": ["small", "large", "heavy", "B757"], 
+V = pd.DataFrame({"type": ["small", "large", "heavy", "B757"], # separation minima between aircraft types in seconds
                       "small": [59, 59, 59, 59], 
                       "large": [88, 61, 61, 61], 
                       "heavy": [109, 109, 90, 109], 
                       "B757": [110, 91, 91, 91]})
 
-sep_m = pd.DataFrame({"type": ["small", "large", "heavy", "B757"], 
+Sep = pd.DataFrame({"type": ["small", "large", "heavy", "B757"], 
                       "small": [40, 45, 55, 60], 
                       "large": [45, 50, 60, 65], 
                       "heavy": [55, 60, 70, 75], 
                       "B757": [60, 65, 75, 80]})
-print(sep_t)
+print(V)
 # Create a simple model
 model = gp.Model("test")
 
 # List with tuples of aircraft ID combinations
-a_combinations = [(A[i], A[j], nodes[k]) for i in range(len(A)) for j in range(len(A)) if i != j if A[i] < A[j] for k in range(len(nodes))]
+a_k_combinations = [(A[i], A[j], nodes[k]) for i in range(len(A)) for j in range(len(A)) if i != j if A[i] < A[j] for k in range(len(nodes))]
 
 
 # Decision variables
-Z = model.addVars(a_combinations, name = "Z", vtype=GRB.BINARY)
+Z = model.addVars(a_k_combinations, name = "Z", vtype=GRB.BINARY)
 
 
-t = model.addVars([(A[i], nodes[k]) for i in range(len(A)) for k in range(len(nodes))], vtype=GRB.CONTINUOUS, lb=0, name="t")
+t = model.addVars([(P_list[i], nodes[k]) for i in range(len(A)) for k in range(len(nodes))], vtype=GRB.CONTINUOUS, lb=0, name="t")
 
 
-rho = model.addVar(A, A, vtype=GRB.BINARY, name="rho")
+rho = model.addVars([(P_list[i], P_list[j]) for i in range(len(A)) for j in range(len(P_list)) if i<j], vtype=GRB.BINARY, name="rho")
 
+#print("For gamma: ", [(P_list[i], R.loc[j, "name"]) for i in range(len(A)) for j in range(len(R))])
+Gamma = model.addVars([(P_list[i], R.loc[j, "name"]) for i in range(len(A)) for j in range(len(R))], vtype=GRB.BINARY, name="Gamma")
 
-Gamma = model.addVar(A, R, vtype=GRB.BINARY, name="Gamma")
 
 # Objective: time sum
 model.setObjective(gp.quicksum(t[i,u] for i in A for u in U), GRB.MINIMIZE)
@@ -219,18 +243,18 @@ model.addConstrs(
 # Constraint 21,22 are non-linear
 
 # Constraint 23  ---- Need to update with N
-model.addConstrs(
-    (t[j, u] - t[i, u] - (t[i,v] - t[i, u]) * Sep_uv[(u, v)] / length_edge((u, v)) >=
-            - (3 - ((Z[i,j,u]) + gp.quicksum(Gamma[i, r] for r in routes_with_edge((u,v)))
-                   + gp.quicksum(Gamma[j, r] for r in R if u in 
-                   R_nodes[r]   # Here need N[r] wich is the nodes in sequence for route r
-                   ))) * M
-                    for i in A for j in A if i != j for (u, v) in E),
-                     name="sep_situation1")
+# model.addConstrs(
+#     (t[j, u] - t[i, u] - (t[i,v] - t[i, u]) * find_separation(i,j) / length_edge((u, v)) >=
+#             - (3 - ((Z[i,j,u]) + gp.quicksum(Gamma[i, r] for r in routes_with_edge((u,v)))
+#                    + gp.quicksum(Gamma[j, r] for r in R if u in 
+#                    R_nodes[r]   # Here need N[r] wich is the nodes in sequence for route r
+#                    ))) * M
+#                     for i in A for j in A if i != j for (u, v) in E),
+#                      name="sep_situation1")
 
 # Constraint 24 ---- Need to update with N
 model.addConstrs(
-    (t[i,v] - t[j,v] - (t[j,v] - t[j, w]) * Sep_uv[(w, v)] / length_edge((w, v)) >=
+    (t[i,v] - t[j,v] - (t[j,v] - t[j, w]) * find_separation(i,j) / length_edge((w, v)) >=
             - (3 - ((Z[j,i,v]) + gp.quicksum(Gamma[j, r] for r in routes_with_edge((w,v)))
                    + gp.quicksum(Gamma[i, r] for r in R if v in 
                     R_nodes[r]) # Here need N[r] wich is the nodes in sequence for route r
@@ -239,13 +263,25 @@ model.addConstrs(
                      name="sep_situation2")
 
 # Constraint 28
-model.addConstrs(
-    t[j,d] - t[i,d] - V[i,j]
-)
+d = ... # this should be the runway node
+model.addConstrs((
+    t[j,d] - t[i,d] - V[i,j] >= - (1- rho[i,j]) * M 
+    for i in D for j in D if i!=j), name = 'runway_occupancy' )
+
 # Constraint 31
+model.addConstrs((
+    t[j,b_k] - t[i,'17ra'] - Tidep >= - M * (1- rho[i,j])
+    for i in D for j in A for b_k in b), name = 'runway_crossing_arrival' )
+
 # Constraint 32
+model.addConstrs((
+    t[i,'17ra'] - t[j,a_k] - Tidep >= - M * (1- rho[i,j])
+    for i in D for j in A for a_k in a), name = 'runway_crossing_departure' )
 
 # Constraint 33
+model.addConstrs((
+    t[i,c_k] <= 
+    for i in A for j in A for c_k in c), name = 'runway_crossing_departure' )
 
 # Optimize
 model.optimize()
