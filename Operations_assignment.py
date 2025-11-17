@@ -37,14 +37,23 @@ def create_routes():
 
     return R
 
+nodes = nodes_df["name"].tolist()
+
 def routes_with_edge(edge):
     return R.loc[R["edges"].apply(lambda edge_list: edge in edge_list), "name"].tolist()
+
+
 
 # TODO functie die lengths per edges geeft
 # Because I use:  L[(u, v)]
 
+# TODO we need N where N_i^p is the pth route for aircraft i, where that then is a list of nodes in sequence of the route
+
 
 R = create_routes()
+
+print(routes_with_edge(("a1", "p2")))
+
 
 n_aircraft = 2  # or len(aircraft_list) if you load data
 n_nodes = 42 # number of nodes in the network (0,1,2,3) arrival (4,5,6,7,8) departure (9...) taxiway nodes
@@ -52,14 +61,20 @@ n_routes = 3  # number of possible routes
 
 M = 1e4
 Suv_max = 30 * 0.514444 #max speed in m/s
+e_l = 3 #edge capacity for all runway exits
+Tidep = 55
 
 # Index set for aircraft
 # Set of aircraft
-P = pd.DataFrame([{ "id": "AC1", "A/D": "A", "ETD": pd.Timestamp("2024-06-01 10:00:00")}, 
+P = pd.DataFrame([{ "id": "AC1", "A/D": "A", "ETD": pd.Timestamp("2024-06-01 10:00:00")},
+                  { "id": "AC3", "A/D": "A", "ETD": pd.Timestamp("2024-06-01 10:00:00")}, 
                     { "id": "AC2", "A/D": "D", "PBT": pd.Timestamp("2024-06-01 10:00:00")}])
 R = range(n_routes)
 
-A = P.loc[]
+A = P.loc[ P["A/D"] == "A"]["id"].to_list()
+print(A)
+
+
 
 
 # # Set of nodes in each route #TODO hoe definieren we welke AC welke route mag nemen?
@@ -75,8 +90,6 @@ A = P.loc[]
 # edge_routes = {
 # (u,v): [r for r in R if any(R_nodes[r][k]==u and R_nodes[r][k+1]==v for k in range(len(R_nodes[r])-1))]
 # for (u,v) in E}
-
-
     
 sep_t = pd.DataFrame({"type": ["small", "large", "heavy", "B757"], 
                       "small": [59, 59, 59, 59], 
@@ -93,10 +106,20 @@ print(sep_t)
 # Create a simple model
 model = gp.Model("test")
 
+# List with tuples of aircraft ID combinations
+a_combinations = [(A[i], A[j], nodes[k]) for i in range(len(A)) for j in range(len(A)) if i != j if A[i] < A[j] for k in range(len(nodes))]
+
+
 # Decision variables
-Z = model.addVar(A, A, V, vtype=GRB.BINARY, name="Z")
-t = model.addVars(A, V, vtype=GRB.CONTINUOUS, lb=0, name="t")
+Z = model.addVars(a_combinations, name = "Z", vtype=GRB.BINARY)
+
+
+t = model.addVars([(A[i], nodes[k]) for i in range(len(A)) for k in range(len(nodes))], vtype=GRB.CONTINUOUS, lb=0, name="t")
+
+
 rho = model.addVar(A, A, vtype=GRB.BINARY, name="rho")
+
+
 Gamma = model.addVar(A, R, vtype=GRB.BINARY, name="Gamma")
 
 # Objective: time sum
@@ -139,16 +162,16 @@ name="sequence_consistency_lower")
 # Constraint 11: 
 model.addConstrs(
     (z[i,j,u] - z[i,j,v] <= 2 -
-    (gp.quicksum(Gamma[i,r] for r in edge_routes[(u,v)]) +
-    gp.quicksum(Gamma[j,r] for r in edge_routes[(u,v)]))
+    (gp.quicksum(Gamma[i,r] for r in routes_with_edge((u,v))) +
+    gp.quicksum(Gamma[j,r] for r in routes_with_edge((u,v))))
     for i in A for j in A if i != j for (u,v) in E),
 name="no_overtake_upper")
 
 # Constraint 12: 
 model.addConstrs(
 (Z[i,j,u] - Z[i,j,v] >= (
-    gp.quicksum(Gamma[i,r] for r in edge_routes[(u,v)]) +
-    gp.quicksum(Gamma[j,r] for r in edge_routes[(u,v)])
+    gp.quicksum(Gamma[i,r] for r in routes_with_edge((u,v))) +
+    gp.quicksum(Gamma[j,r] for r in routes_with_edge((u,v)))
 ) - 2
     for i in A for j in A if i != j for (u,v) in E),
 name="no_overtake_lower")
@@ -156,21 +179,21 @@ name="no_overtake_lower")
 # Constraint 13:  
 model.addConstrs(
     (z[i,j,u] - z[i,j,v] <= 2 -
-    (gp.quicksum(Gamma[i,r] for r in edge_routes[(u,v)]) +
-    gp.quicksum(Gamma[j,r] for r in edge_routes[(v,u)]))
+    (gp.quicksum(Gamma[i,r] for r in routes_with_edge((u,v))) +
+    gp.quicksum(Gamma[j,r] for r in routes_with_edge((u,v))))
     for i in A for j in A if i != j for (u,v) in E),
 name="headon_upper")
 
 # Constraint 14:  
 model.addConstrs(
 (Z[i,j,u] + Z[i,j,v] >= (
-    gp.quicksum(Gamma[i,r] for r in edge_routes[(u,v)]) +
-    gp.quicksum(Gamma[j,r] for r in edge_routes[(v,u)])
+    gp.quicksum(Gamma[i,r] for r in routes_with_edge((u,v))) +
+    gp.quicksum(Gamma[j,r] for r in routes_with_edge((u,v)))
 ) - 2
     for i in A for j in A if i != j for (u,v) in E),
 name="headon_lower")
 
-# Constraint 15: UPDATE with dataframe
+# Constraint 15: TODO UPDATE with dataframe
 arrival_node = {i: routes[i][0] for i in routes}       # first node
 model.addConstrs(
 (t[j, routes[j][0]] >= ETD[j] for j in A_arrival),
@@ -186,7 +209,7 @@ name="departure_time_window")
 # Constraint 19: max taxi speed
 model.addConstrs(
     (t[i, v] - t[i, u] >= routes_with_edge((u, v)) / Suv_max
-     - M * (1 - gp.quicksum(Gamma[i, r] for r in edge_routes[(u, v)]))
+     - M * (1 - gp.quicksum(Gamma[i, r] for r in routes_with_edge((u,v))))
      for i in A for (u, v) in E),
     name="taxi_speed_lower"
 )
@@ -194,20 +217,35 @@ model.addConstrs(
 # Constraint 20: chosen not to be constrained by min taxi speed
 
 # Constraint 21,22 are non-linear
-# Constraint 23
 
-
-
-ra dna deziraenil era 81/enil-non :71 71tniartno
-# Constraint 19:
+# Constraint 23  ---- Need to update with N
 model.addConstrs(
-    (t[i, v] - t[i, u] >= L[(u, v)] / Suv_max
-     - M * (1 - gp.quicksum(Gamma[i, r] for r in edge_routes[(u, v)]))
-     for i in A for (u, v) in E),
-    name="taxi_speed_lower"
-)
+    (t[j, u] - t[i, u] - (t[i,v] - t[i, u]) * Sep_uv[(u, v)] / length_edge((u, v)) >=
+            - (3 - ((Z[i,j,u]) + gp.quicksum(Gamma[i, r] for r in routes_with_edge((u,v)))
+                   + gp.quicksum(Gamma[j, r] for r in R if u in 
+                   R_nodes[r]   # Here need N[r] wich is the nodes in sequence for route r
+                   ))) * M
+                    for i in A for j in A if i != j for (u, v) in E),
+                     name="sep_situation1")
 
-# Constraint 20: 
+# Constraint 24 ---- Need to update with N
+model.addConstrs(
+    (t[i,v] - t[j,v] - (t[j,v] - t[j, w]) * Sep_uv[(w, v)] / length_edge((w, v)) >=
+            - (3 - ((Z[j,i,v]) + gp.quicksum(Gamma[j, r] for r in routes_with_edge((w,v)))
+                   + gp.quicksum(Gamma[i, r] for r in R if v in 
+                    R_nodes[r]) # Here need N[r] wich is the nodes in sequence for route r
+                                 )) * M
+                    for i in A for j in A if i != j for (w, v) in E),
+                     name="sep_situation2")
+
+# Constraint 28
+model.addConstrs(
+    t[j,d] - t[i,d] - V[i,j]
+)
+# Constraint 31
+# Constraint 32
+
+# Constraint 33
 
 # Optimize
 model.optimize()
