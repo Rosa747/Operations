@@ -68,10 +68,12 @@ def fill_upsilon(P, R):
     
     # For each row in P, build the set of unique nodes
     P["Upsilon"] = P["routes"].apply(
-        lambda route_names: {node for r in route_names for node in route_dict[r]}
+        lambda route_names: {str(node) for r in route_names for node in route_dict[r]}
     )
     
     return P
+
+
 
 def get_first_node(aircraft_id):
     route_name = P.loc[P["id"] == aircraft_id, "routes"].iloc[0][0]  # e.g. "route_arr_1a"
@@ -84,9 +86,9 @@ def get_last_node(aircraft_id):
     return last_node
 
 '''
-# TODO redefine route1 and route2 to set of all possible routes for ac i and ac j
-# def get_common_nodes(route1, route2):
-#     return list(set(route1) & set(route2))
+TODO redefine route1 and route2 to set of all possible routes for ac i and ac j
+def get_common_nodes(route1, route2):
+    return list(set(route1) & set(route2))
 
 # TODO 
     # Define E #Lynn -> klaar (constraint 23/24 updaten nog)
@@ -101,11 +103,10 @@ def get_last_node(aircraft_id):
 
     #Check of deze TODOs nog nodig zijn
 
-    # # Set of nodes in each route #TODO hoe definieren we welke AC welke route mag nemen?
+    #TODO hoe definieren we welke AC welke route mag nemen?
     # for i in P:
     #     Ypsilon = {r: R["route"][r] for r in range(n_routes)}
 
-    # # Set of edges in each route #TODO hoe definieren we welke AC welke route mag nemen?
     # for i in P:
     #     Lambda = {r: [(R["route"][r][k], R["route"][r][k+1]) for k in range(len(R["route"][r])-1)] for r in range(n_routes)}
 '''
@@ -152,7 +153,7 @@ P_list = P["id"].to_list()
 # List with tuples of aircraft ID combinations
 a_k_combinations = [(A[i], A[j], nodes[k]) for i in range(len(A)) for j in range(len(A)) if i != j if A[i] < A[j] for k in range(len(nodes))]
 
-
+print("This is fill upsdilon", fill_upsilon(P, R)["Upsilon"], "\n \n \n")
 # --- Node & Edge dataset ---
 E = build_E(P, R)
 L = [("p2","a1"), ("p3","a2"), ("p4","a3"), ("p5","a4")]
@@ -170,10 +171,20 @@ route_nodes = {
     for _, row in R.iterrows()
 }
 
+# Map route name → list of nodes
+route_map = dict(zip(R["name"], R["route"]))
+
+# Build N[i][p] = route list of p-th possible route for aircraft i
+N_dict = {
+    i: {p: route_map[rname] for p, rname in enumerate(P_routes[i], start=1)}
+    for i in P_list
+}
+N = pd.DataFrame.from_dict(N_dict, orient="index")
+N.index.name = "i"
+N.columns = [p for p in N.columns]
 
 
-# Global set of all edges (w, v) in the network
-# E_all = sorted({edge for edges in route_edges.values() for edge in edges})
+print(f"This is dataframe N: \n{N} \n \n \n")
 
 # --- Aicraft dataset ---
 V = pd.DataFrame({"type": ["small", "large", "heavy", "B757"], # separation minima between aircraft types in seconds
@@ -199,7 +210,7 @@ for i in P_list:
             nodes_i = P.loc[P["id"] == i, "Upsilon"].iloc[0]
             nodes_j = P.loc[P["id"] == j, "Upsilon"].iloc[0]
             U[(i, j)] = nodes_i.intersection(nodes_j)
-print(U)
+            
 
 P_routes = {
     row["id"]: row["routes"]
@@ -208,9 +219,6 @@ P_routes = {
 
 # Create model
 model = gp.Model("test")
-
-
-# U is the set of nodes aircraft i and j can both visit
 
 
 # Decision variables
@@ -223,14 +231,15 @@ rho =       model.addVars([(P_list[i], P_list[j])
                            for i in range(len(P_list)) 
                            for j in range(len(P_list)) if i<j],
                             vtype=GRB.BINARY, name="rho")
-Gamma =     model.addVars([(P_list[i], R.loc[j, "name"]) 
+Gamma =     model.addVars([(P_list[i], R.loc[r, "name"]) 
                            for i in range(len(P_list)) 
-                           for j in range(len(R))], 
+                           for r in range(len(R))], 
                            vtype=GRB.BINARY, name="Gamma")
 
 
 # --- Objective Function ---
 model.setObjective(gp.quicksum(t[i,get_last_node(i)] for i in P_list), GRB.MINIMIZE)
+
 
 # --- Constraints ---
 
@@ -249,8 +258,8 @@ model.addConstrs(
             for r in P_routes[i]          # only routes allowed for aircraft i
             if u in route_nodes[r]        # and that contain node u
         )
-        for i in A
-        for j in A if i != j
+        for i in P
+        for j in P if i != j
         for u in U[(i, j)]                 # U is here u ∈ Υi ∩ Υj
     ),
     name="Z_limited_by_i_route",
@@ -261,12 +270,12 @@ model.addConstrs(
 model.addConstrs(
     (
         Z[i, j, u] <= gp.quicksum(
-            Gamma[i, r]
-            for r in P_routes[i]          # only routes allowed for aircraft i
+            Gamma[j, r]
+            for r in P_routes[j]          # only routes allowed for aircraft j
             if u in route_nodes[r]        # and that contain node u
         )
-        for i in A
-        for j in A
+        for i in P
+        for j in P
         for u in U[(i, j)]                 #U is here u ∈ Υi ∩ Υj
     ),
     name="Z_limited_by_j_route",
@@ -288,8 +297,8 @@ model.addConstrs(
                  for r in P_routes[j]      # only routes that j can use
                  if u in route_nodes[r]
              )
-        for i in A
-        for j in A
+        for i in P
+        for j in P
         if i != j
         for u in U[(i, j)] # U is here u ∈ Υi ∩ Υj
     ),
@@ -312,8 +321,8 @@ model.addConstrs(
                     if u in route_nodes[r]
                 )
             ) - 3
-        for i in A
-        for j in A
+        for i in P
+        for j in P
         if i != j
         for u in U[(i, j)]  #U is here u ∈ Υi ∩ Υj
     ),
@@ -323,8 +332,8 @@ model.addConstrs(
 
 # Constraint 11 & 12: Overtaking constraints
 # Loop over all aircraft pairs
-for i in A:
-    for j in A:
+for i in P:
+    for j in P:
         if i == j:
             continue
 
@@ -362,8 +371,8 @@ for i in A:
 
 
 # Constraint 13 & 14: Head-on constraints (upper and lower)
-for i in A:
-    for j in A:
+for i in P:
+    for j in P:
         if i == j:
             continue
 
@@ -400,9 +409,7 @@ for i in A:
                         )
 
 
-# Constraint 15: TODO UPDATE with dataframe
-first_route_name = P.at[idx, "routes"][0]  # e.g. "route_arr_1a"
-first_node = R.loc[R["name"] == first_route_name, "route"].iloc[0][0]  # e.g. "a1"
+# Constraint 15: not scheduled before estimated touchdown time 
 model.addConstrs(
     (
         t[j, get_first_node(j)] >= P.loc[P["id"] == j, "ETD"].iloc[0]
@@ -411,12 +418,10 @@ model.addConstrs(
     name="arrival_time_window",
 )
 
-# Constraint 16: UPDATE with dataframe
-first_route_name = P.at[idx, "routes"][0]  # e.g. "route_arr_1a"
-first_node = R.loc[R["name"] == first_route_name, "route"].iloc[0][0]  # e.g. "a1"
+# Constraint 16: Not scheduled before planned push-back time
 model.addConstrs(
     (
-        t[i, get_first_node(i)] >= P.loc[P["id"] == j, "PBT"].iloc[0]
+        t[i, get_first_node(i)] >= P.loc[P["id"] == i, "PBT"].iloc[0]
         for i in D
     ),
     name="departure_time_window",
@@ -424,7 +429,7 @@ model.addConstrs(
 
 # Constraint 17,18 are not linearized: constraint 19,20 are linearized version
 # Constraint 19: max taxi speed
-for i in A:
+for i in P:
     for r_i in E[i]:              # aircraft i's possible routes
         for (u, v) in E[i][r_i]:  # edges in route r_i
             model.addConstr(
@@ -443,12 +448,12 @@ for i in A:
 # Constraint 23  ---- Need to update with N
 model.addConstrs(
     (t[j, u] - t[i, u] - (t[i,v] - t[i, u]) * find_separation(i,j) / length_edge((u, v)) >=
-            - (3 - ((Z[i,j,u]) + gp.quicksum(Gamma[i, r] for r in routes_with_edge((u,v)))
+            - (3 - ((Z[i,j,u]) + gp.quicksum(Gamma[i, r] for r in routes_with_edge((u,v)) if r in P_routes[i])
                    + gp.quicksum(Gamma[i, r] 
                                  for r in P_routes[i] if v in route_nodes[r])
                 )) * M
                     for i in A for j in A if i != j 
-                    for (u, v) in E),
+                    for (u, v) in E.loc[i] if u in U[(i, j)]), 
                      name="sep_situation1")
 
 # Constraint 24 ---- Need to update with N
@@ -487,20 +492,25 @@ model.addConstrs((
     for a_k in a), name = 'runway_crossing_departure' )
 
 # Constraint 33
-for l in L:                      
+for l in L:
     for i in A:
         for j in A:
             if i == j:
                 continue
-            for r_i in E[i]:
-                if l in [edge for edge in E[i][r_i]]:       # i uses edge l
-                    for r_j in E[j]:
-                        if l in [edge for edge in E[j][r_j]]:  # j uses edge l
-                            model.addConstr(
-                                t[i, l[0]] <= P.loc[P["id"] == j, "ETD"].iloc[0],
 
-                                name=f"exit_capacity_{i}_{j}_{l}"
-                            )
+            # i uses edge l ?
+            i_uses_l = any(l == e for route in E[i].values() for e in route)
+            # j uses edge l ?
+            j_uses_l = any(l == e for route in E[j].values() for e in route)
+
+            if i_uses_l and j_uses_l:
+                ETD_j = P.loc[P["id"] == j, "ETD"].iloc[0]
+
+                model.addConstr(
+                    t[i, l[0]] <= ETD_j,
+                    name=f"exit_capacity_{i}_{j}_{l}"
+                )
+
 
 
 # --- Generating results ---
