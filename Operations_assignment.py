@@ -83,6 +83,7 @@ def get_last_node(aircraft_id):
     last_node = R.loc[R["name"] == route_name, "route"].iloc[0][-1] # e.g. "d5"
     return last_node
 
+'''
 # TODO redefine route1 and route2 to set of all possible routes for ac i and ac j
 # def get_common_nodes(route1, route2):
 #     return list(set(route1) & set(route2))
@@ -99,20 +100,18 @@ def get_last_node(aircraft_id):
     # Define R_nodes # Jim done
 
     #Check of deze TODOs nog nodig zijn
-    # TODO subset of edges: L = all exit taxi edges
 
     # # Set of nodes in each route #TODO hoe definieren we welke AC welke route mag nemen?
     # for i in P:
     #     Ypsilon = {r: R["route"][r] for r in range(n_routes)}
+
     # # Set of edges in each route #TODO hoe definieren we welke AC welke route mag nemen?
     # for i in P:
     #     Lambda = {r: [(R["route"][r][k], R["route"][r][k+1]) for k in range(len(R["route"][r])-1)] for r in range(n_routes)}
+'''
 
 
-
-
-# print(routes_with_edge(("a1", "p2")))
-
+# --- Simulation Parameters ---
 n_aircraft = 2  # or len(aircraft_list) if you load data
 n_nodes = 42 # number of nodes in the network (0,1,2,3) arrival (4,5,6,7,8) departure (9...) taxiway nodes
 n_routes = 3  # number of possible routes
@@ -127,11 +126,12 @@ Tidep = 55                      # departure time interval in seconds for all D
 # Create dataframes:
 R = create_routes()     # Set of routes for aircraft i
 
-# Set of aircraft
+# --- Create Datasets ---
+
+# --- Aircraft ---
 P = pd.DataFrame([{ "id": "AC1", "A/D": "A", "ETD": 100, "WTC": "large"}, #ETD in sec
                   { "id": "AC2", "A/D": "A", "ETD": 200, "WTC": "large"}, #ETD in sec
                     { "id": "AC3", "A/D": "D", "PBT": 150, "WTC": "large"}]) #PBT in sec
-
 
 P["routes"] = None
 P["Upsilon"] = None
@@ -143,9 +143,8 @@ for idx, aircraft in P.iterrows():
         P.at[idx, "routes"] = routes_A
     else:
         P.at[idx, "routes"] = routes_D
-P = fill_upsilon(P, R)
 
-# Create subsets of aircraft
+P = fill_upsilon(P, R)
 A = P.loc[ P["A/D"] == "A"]["id"].to_list()
 D = P.loc[ P["A/D"] == "D"]["id"].to_list()
 P_list = P["id"].to_list()
@@ -154,26 +153,29 @@ P_list = P["id"].to_list()
 a_k_combinations = [(A[i], A[j], nodes[k]) for i in range(len(A)) for j in range(len(A)) if i != j if A[i] < A[j] for k in range(len(nodes))]
 
 
-# Create subset of edges
+# --- Node & Edge dataset ---
 E = build_E(P, R)
 L = [("p2","a1"), ("p3","a2"), ("p4","a3"), ("p5","a4")]
-
-# Create subsets of nodes
 a = ["l3", "l4", "l5", "l6"]  # left side arrival runway exits
 b = ["p2", "p3", "p4", "p5"]  # right side arrival runway exits
 c = ["a1", "a2", "a3", "a4"]  # departure runway entries
 
-
-# Route -> list of edges
 route_edges = {
     row["name"]: row["edges"]
     for _, row in R.iterrows()
 }
 
+route_nodes = {
+    row["name"]: set(row["route"])
+    for _, row in R.iterrows()
+}
+
+
+
 # Global set of all edges (w, v) in the network
 # E_all = sorted({edge for edges in route_edges.values() for edge in edges})
 
-# Aircraft characteristics: separation minima
+# --- Aicraft dataset ---
 V = pd.DataFrame({"type": ["small", "large", "heavy", "B757"], # separation minima between aircraft types in seconds
                       "small": [59, 59, 59, 59], 
                       "large": [88, 61, 61, 61], 
@@ -183,32 +185,13 @@ V = pd.DataFrame({"type": ["small", "large", "heavy", "B757"], # separation mini
 a = ["l3", "l4", "l5", "l6"]  # left side arrival runway exits
 b = ["p2", "p3", "p4", "p5"]  # right side arrival runway exits
 c = ["a1", "a2", "a3", "a4"]  # departure runway entries
+U = {}
 
-# -- Separation minima --
 Sep = pd.DataFrame({"type": ["small", "large", "heavy", "B757"], 
                       "small": [40, 45, 55, 60], 
                       "large": [45, 50, 60, 65], 
                       "heavy": [55, 60, 70, 75], 
                       "B757": [60, 65, 75, 80]})
-
-# Create a simple model
-model = gp.Model("test")
-
-# 1) Route: set of nodes for quick membership
-route_nodes = {
-    row["name"]: set(row["route"])
-    for _, row in R.iterrows()
-}
-
-# 2) Aircraft: list of route names
-P_routes = {
-    row["id"]: row["routes"]
-    for _, row in P.iterrows()
-}
- 
-
-# U is the set of nodes aircraft i and j can both visit
-U = {}
 
 for i in P_list:
     for j in P_list:
@@ -216,32 +199,49 @@ for i in P_list:
             nodes_i = P.loc[P["id"] == i, "Upsilon"].iloc[0]
             nodes_j = P.loc[P["id"] == j, "Upsilon"].iloc[0]
             U[(i, j)] = nodes_i.intersection(nodes_j)
+print(U)
 
+P_routes = {
+    row["id"]: row["routes"]
+    for _, row in P.iterrows()
+}
+
+# Create model
+model = gp.Model("test")
+
+
+# U is the set of nodes aircraft i and j can both visit
 
 
 # Decision variables
-Z = model.addVars(a_k_combinations, name = "Z", vtype=GRB.BINARY)
+Z =         model.addVars(a_k_combinations, name = "Z", vtype=GRB.BINARY)
+t_index =   [(aircraft_id, node) 
+             for aircraft_id, nodes in zip(P["id"], P["Upsilon"]) 
+             for node in nodes]
+t =         model.addVars(t_index, name="t", vtype=GRB.CONTINUOUS, lb=0)
+rho =       model.addVars([(P_list[i], P_list[j]) 
+                           for i in range(len(P_list)) 
+                           for j in range(len(P_list)) if i<j],
+                            vtype=GRB.BINARY, name="rho")
+Gamma =     model.addVars([(P_list[i], R.loc[j, "name"]) 
+                           for i in range(len(P_list)) 
+                           for j in range(len(R))], 
+                           vtype=GRB.BINARY, name="Gamma")
 
-t_index = [(aircraft_id, node) for aircraft_id, nodes in zip(P["id"], P["Upsilon"]) for node in nodes]
-t = model.addVars(t_index, name="t", vtype=GRB.CONTINUOUS, lb=0)
 
-rho = model.addVars([(P_list[i], P_list[j]) for i in range(len(P_list)) for j in range(len(P_list)) if i<j], vtype=GRB.BINARY, name="rho")
-
-#print("For gamma: ", [(P_list[i], R.loc[j, "name"]) for i in range(len(A)) for j in range(len(R))])
-Gamma = model.addVars([(P_list[i], R.loc[j, "name"]) for i in range(len(P_list)) for j in range(len(R))], vtype=GRB.BINARY, name="Gamma")
-
-# Objective: time sum
+# --- Objective Function ---
 model.setObjective(gp.quicksum(t[i,get_last_node(i)] for i in P_list), GRB.MINIMIZE)
 
 # --- Constraints ---
 
 # Constraint 6: one route
 model.addConstrs(
-(gp.quicksum(Gamma[acft, route] for route in P.loc[P["id"] == acft, "route"].iloc[0]) == 1 for acft in P_list),
+    (gp.quicksum(Gamma[acft, route] 
+             for route in P.loc[P["id"] == acft, "routes"].iloc[0]) == 1 
+             for acft in P_list),
 name="one_route_per_aircraft")
 
 # Constraint 7:
-
 model.addConstrs(
     (
         Z[i, j, u] <= gp.quicksum(
@@ -250,8 +250,8 @@ model.addConstrs(
             if u in route_nodes[r]        # and that contain node u
         )
         for i in A
-        for j in A
-        for u in U[(i, j)] # U is here u ∈ Υi ∩ Υj
+        for j in A if i != j
+        for u in U[(i, j)]                 # U is here u ∈ Υi ∩ Υj
     ),
     name="Z_limited_by_i_route",
 )
@@ -267,7 +267,7 @@ model.addConstrs(
         )
         for i in A
         for j in A
-        for u in U[(i, j)] #U is here u ∈ Υi ∩ Υj
+        for u in U[(i, j)]                 #U is here u ∈ Υi ∩ Υj
     ),
     name="Z_limited_by_j_route",
 )
@@ -315,7 +315,7 @@ model.addConstrs(
         for i in A
         for j in A
         if i != j
-        for u in U[(i, j)] #U is here u ∈ Υi ∩ Υj
+        for u in U[(i, j)]  #U is here u ∈ Υi ∩ Υj
     ),
     name="sequence_consistency_lower",
 )
@@ -429,8 +429,10 @@ for i in A:
         for (u, v) in E[i][r_i]:  # edges in route r_i
             model.addConstr(
                 t[i, v] - t[i, u] <= (length_edge((u, v)) / Suv_max) *
-                (M -M *(gp.quicksum(Gamma[i, r] for r in routes_with_edge((u, v)))) +
-                gp.quicksum(Gamma[i, r] for r in routes_with_edge((u, v)))) ,
+                (M -M *(gp.quicksum(Gamma[i, r] 
+                                    for r in routes_with_edge((u, v)))) +
+                gp.quicksum(Gamma[i, r] 
+                            for r in routes_with_edge((u, v)))) ,
                 name=f"taxi_speed_lower_{i}_{u}_{v}"
             )
 
@@ -442,15 +444,18 @@ for i in A:
 model.addConstrs(
     (t[j, u] - t[i, u] - (t[i,v] - t[i, u]) * find_separation(i,j) / length_edge((u, v)) >=
             - (3 - ((Z[i,j,u]) + gp.quicksum(Gamma[i, r] for r in routes_with_edge((u,v)))
-                   + gp.quicksum(Gamma[i, r] for r in P_routes[i] if v in route_nodes[r])
+                   + gp.quicksum(Gamma[i, r] 
+                                 for r in P_routes[i] if v in route_nodes[r])
                 )) * M
-                    for i in A for j in A if i != j for (u, v) in E),
+                    for i in A for j in A if i != j 
+                    for (u, v) in E),
                      name="sep_situation1")
 
 # Constraint 24 ---- Need to update with N
 model.addConstrs(
     (t[i,v] - t[j,v] - (t[j,v] - t[j, w]) * find_separation(i,j) / length_edge((w, v)) >=
-            - (3 - ((Z[j,i,v]) + gp.quicksum(Gamma[j, r] for r in routes_with_edge((w,v)))
+            - (3 - ((Z[j,i,v]) + gp.quicksum(Gamma[j, r] 
+                                             for r in routes_with_edge((w,v)))
                    + gp.quicksum(Gamma[i, r] for r in P_routes[i] if v in route_nodes[r])
                                  )) * M
                     for i in A 
@@ -482,7 +487,7 @@ model.addConstrs((
     for a_k in a), name = 'runway_crossing_departure' )
 
 # Constraint 33
-for l in L:                             # loop over exit edges
+for l in L:                      
     for i in A:
         for j in A:
             if i == j:
@@ -492,9 +497,11 @@ for l in L:                             # loop over exit edges
                     for r_j in E[j]:
                         if l in [edge for edge in E[j][r_j]]:  # j uses edge l
                             model.addConstr(
-                                t[i, l[0]] <= ETD,
+                                t[i, l[0]] <= P.loc[P["id"] == j, "ETD"].iloc[0],
+
                                 name=f"exit_capacity_{i}_{j}_{l}"
                             )
+
 
 # --- Generating results ---
 model.optimize()
