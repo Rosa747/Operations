@@ -1,0 +1,169 @@
+
+
+import gurobipy as gp
+from gurobipy import GRB
+import numpy as np
+import pandas as pd
+
+nodes_df = pd.read_excel('Node_operations.xlsx')
+
+
+def create_routes():
+
+    route_arr_1a = ["a1", "p2", "p3", "p4", "p5", "p6", "p7", "p8", "l9", "l8", "l7", "l6", "k6", "d5"]
+    route_arr_1b = ["a1", "p2", "17rc", "l3", "k3", "d2"]
+
+    route_dep_1 = ["d2", "k3", "l3", "l2", "l1", "17ra"]
+
+
+    # Define routes departure ac
+        # couldn't find, think just shortest route gate-> departure node
+    # Set of routes
+
+    R = pd.DataFrame([{"name": "route_arr_1a", "route" : route_arr_1a},
+                            {"name": "route_arr_1b", "route" : route_arr_1b},
+                            {"name": "route_dep_1", "route" : route_dep_1}])
+
+
+    def edges(route, directed=True):
+        pairs = list(zip(route, route[1:]))
+        return pairs if directed else [set(p) for p in pairs]
+
+    R = pd.DataFrame([
+        {"name": "route_arr_1a", "A/D": "A", "route": route_arr_1a, "edges": edges(route_arr_1a, directed=True)},
+        {"name": "route_arr_1b", "A/D": "A", "route": route_arr_1b, "edges": edges(route_arr_1b, directed=True)},
+        {"name": "route_dep_1",  "A/D": "D", "route": route_dep_1,  "edges": edges(route_dep_1, directed=True)},
+    ])
+
+    return R
+
+def build_E(P, R):
+    E = {}
+    for _, row in P.iterrows():
+        ac = row["id"]
+        routes = row["routes"]
+        E[ac] = {}
+        if routes is None:
+            continue
+        for r in routes:
+            E[ac][r] = R.loc[R["name"] == r, "edges"].values[0]
+    return E
+
+nodes = nodes_df["name"].tolist()
+
+def routes_with_edge(edge):
+    return R.loc[R["edges"].apply(lambda edge_list: edge in edge_list), "name"].tolist()
+
+def find_separation(leading_ac, trailing_ac):
+    return Sep.loc[P.loc[P['id'] == trailing_ac, 'WTC'], P.loc[P['id'] == leading_ac, 'WTC']]
+
+def find_etd(id):
+    return P.loc[P["id"] == id, "ETD"]
+
+def length_edge(edge):
+    u, v = edge
+    delta_x = nodes_df.loc[nodes_df['name'] == v, 'x'].values[0] - nodes_df.loc[nodes_df['name'] == u, 'x'].values[0]
+    delta_y = nodes_df.loc[nodes_df['name'] == v, 'y'].values[0] - nodes_df.loc[nodes_df['name'] == u, 'y'].values[0]
+    length = np.sqrt(delta_x ** 2 + delta_y ** 2)
+    return length
+
+# TODO redefine route1 and route2 to set of all possible routes for ac i and ac j
+# def get_common_nodes(route1, route2):
+#     return list(set(route1) & set(route2))
+
+# TODO 
+    # Define E #Lynn
+    # Define N #Lynn
+    # Define U #Lynn
+    # Define ETD #Rosa
+    # Define A_arrival #Rosa
+    # Define A_departure #Rosa
+    # Define Routes #Jim
+    # Define PBT #Jim
+    # Define R_nodes # Jim
+
+R = create_routes()
+
+print(routes_with_edge(("a1", "p2")))
+
+# N = {aircraft: R["A/D"] == "A" for aircraft in P.loc[ P["A/D"] == "A"]["id"].to_list()}
+
+
+n_aircraft = 2  # or len(aircraft_list) if you load data
+n_nodes = 42 # number of nodes in the network (0,1,2,3) arrival (4,5,6,7,8) departure (9...) taxiway nodes
+n_routes = 3  # number of possible routes
+
+M = 1e4
+Suv_max = 30 * 0.514444 #max speed in m/s
+e_l = 3 #edge capacity for all runway exits
+Tidep = 55 #departure time interval in seconds for all D
+
+# Index set for aircraft
+# Set of aircraft
+P = pd.DataFrame([{ "id": "AC1", "A/D": "A", "ETD": 100, "WTC": "large"}, #ETD in sec
+                  { "id": "AC2", "A/D": "A", "ETD": 200, "WTC": "large"}, #ETD in sec
+                    { "id": "AC3", "A/D": "D", "PBT": 150, "WTC": "large"}]) #PBT in sec
+
+# TODO we need N where N_i^p is the pth route for aircraft i, where that then is a list of nodes in sequence of the route
+
+P["routes"] = None
+routes_A = R.loc[R["A/D"] == "A", "name"].tolist()
+routes_D = R.loc[R["A/D"] == "D", "name"].tolist()
+
+for idx, aircraft in P.iterrows():
+    if aircraft["A/D"] == "A":
+        P.at[idx, "routes"] = routes_A
+    else:
+        P.at[idx, "routes"] = routes_D
+
+# Create subsets of aircraft
+A = P.loc[ P["A/D"] == "A"]["id"].to_list()
+D = P.loc[ P["A/D"] == "D"]["id"].to_list()
+P_list = P["id"].to_list()
+
+
+# Create subsets of nodes
+a = ["l3", "l4", "l5", "l6"]  # left side arrival runway exits
+b = ["p2", "p3", "p4", "p5"]  # right side arrival runway exits
+c = ["a1", "a2", "a3", "a4"]  # departure runway entries
+
+# TODO subset of edges: L = all exit taxi edges
+
+# Create subset of edges
+# I want a subset of edges E, set of ordered edges denoting aircraft pth's route
+E = build_E(P, R)
+
+print(E["AC2"]["route_arr_1b"])
+
+
+
+# # Set of nodes in each route #TODO hoe definieren we welke AC welke route mag nemen?
+# for i in P:
+#     Ypsilon = {r: R["route"][r] for r in range(n_routes)}
+# # Set of edges in each route #TODO hoe definieren we welke AC welke route mag nemen?
+# for i in P:
+#     Lambda = {r: [(R["route"][r][k], R["route"][r][k+1]) for k in range(len(R["route"][r])-1)] for r in range(n_routes)}
+
+
+# #TODO:
+# # edge_routes is list of route IDs that include edge u,v
+# edge_routes = {
+# (u,v): [r for r in R if any(R_nodes[r][k]==u and R_nodes[r][k+1]==v for k in range(len(R_nodes[r])-1))]
+# for (u,v) in E}
+    
+V = pd.DataFrame({"type": ["small", "large", "heavy", "B757"], # separation minima between aircraft types in seconds
+                      "small": [59, 59, 59, 59], 
+                      "large": [88, 61, 61, 61], 
+                      "heavy": [109, 109, 90, 109], 
+                      "B757": [110, 91, 91, 91]})
+
+Sep = pd.DataFrame({"type": ["small", "large", "heavy", "B757"], 
+                      "small": [40, 45, 55, 60], 
+                      "large": [45, 50, 60, 65], 
+                      "heavy": [55, 60, 70, 75], 
+                      "B757": [60, 65, 75, 80]})
+
+
+L = [("p2","a1"), ("p3","a2"), ("p4","a3"), ("p5","a4")]
+for l in L:
+    print(l[0], l[1])
