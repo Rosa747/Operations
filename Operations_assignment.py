@@ -7,8 +7,6 @@ nodes_df = pd.read_excel('Node_operations.xlsx')
 
 def build_model(params):
 
-    global Suv_max, Sep, Tidep, M
-
     # Function definitions
     def create_routes():
 
@@ -62,8 +60,8 @@ def build_model(params):
         wtc_j = P.loc[P["id"] == j, "WTC"].item()
         return V_matrix.loc[V_matrix["type"] == wtc_j, wtc_i].item()
 
-    def find_etd(id):
-        return P.loc[P["id"] == id, "ETD"]
+    # def find_etd(id):
+    #     return P.loc[P["id"] == id, "ETD"]
 
     def length_edge(edge):
         u, v = edge
@@ -83,15 +81,40 @@ def build_model(params):
         )
         return P
 
-    def get_first_node(aircraft_id):
-        route_name = P.loc[P["id"] == aircraft_id, "routes"].iloc[0][0]  # e.g. "route_arr_1a"
-        first_node = R.loc[R["name"] == route_name, "route"].iloc[0][0]  # e.g. "a1"
-        return first_node
+    def get_first_node(aircraft_id, P, R, Gamma):
+        """
+        Returns the first node of the chosen route for the aircraft.
+        """
+        # Find the chosen route for this aircraft
+        chosen_route = None
+        for r in P.loc[P["id"] == aircraft_id, "routes"].iloc[0]:
+            if Gamma[aircraft_id, r].X > 0.5:
+                chosen_route = r
+                break
 
-    def get_last_node(aircraft_id):
-        route_name = P.loc[P["id"] == aircraft_id, "routes"].iloc[0][0] # e.g. "route_arr_1a"
-        last_node = R.loc[R["name"] == route_name, "route"].iloc[0][-1] # e.g. "d5"
-        return last_node
+        if chosen_route is None:
+            raise ValueError(f"No route chosen for aircraft {aircraft_id}")
+        
+         # Return the last node of that route
+        return R.loc[R["name"] == chosen_route, "route"].iloc[0][0]
+
+
+    def get_last_node(aircraft_id, P, R, Gamma):
+        """
+        Returns the last node of the chosen route for the aircraft.
+        """
+        # Find the chosen route
+        chosen_route = None
+        for r in P.loc[P["id"] == aircraft_id, "routes"].iloc[0]:
+            if Gamma[aircraft_id, r].X > 0.5:
+                chosen_route = r
+                break
+
+        if chosen_route is None:
+            raise ValueError(f"No route chosen for aircraft {aircraft_id}")
+
+        # Return the last node of that route
+        return R.loc[R["name"] == chosen_route, "route"].iloc[0][-1]
 
     '''
     TODO redefine route1 and route2 to set of all possible routes for ac i and ac j
@@ -122,6 +145,8 @@ def build_model(params):
         In get_last_node functie maken we nu een keuze voor een eerste route
         -> moeten we aanpassen
 
+        # Constraint 24 #TODO check if length_edge((w, u)) should be length_edge((w,v))
+
         
         Ideetjes die het waard zijn om te onthouden:
         Lamda?_i = set of edges for aircraft i -> gebruiken wij E voor
@@ -136,13 +161,13 @@ def build_model(params):
 
 
     # --- Simulation Parameters ---
-    n_aircraft = 2  # or len(aircraft_list) if you load data
-    n_nodes = 42 # number of nodes in the network (0,1,2,3) arrival (4,5,6,7,8) departure (9...) taxiway nodes
-    n_routes = 3  # number of possible routes
+    # n_aircraft = 2  # or len(aircraft_list) if you load data
+    # n_nodes = 42 # number of nodes in the network (0,1,2,3) arrival (4,5,6,7,8) departure (9...) taxiway nodes
+    # n_routes = 3  # number of possible routes
 
     M = params.get("M", M)
     Suv_max = (30 * 0.514444) * params.get("taxi_speed_multiplier", 1.0)         # max speed in m/s
-    e_l = 3                                                                      # edge capacity for all runway exits
+    # e_l = 3                                                                      # edge capacity for all runway exits
     Tidep = params.get("Tidep", Tidep)
 
 
@@ -179,14 +204,15 @@ def build_model(params):
     # --- Node & Edge dataset ---
     E = build_E(P, R)
     L = [("p2","a1"), ("p3","a2"), ("p4","a3"), ("p5","a4")]
-    a = ["l3", "l4", "l5", "l6"]  # left side arrival runway exits
-    b = ["p2", "p3", "p4", "p5"]  # right side arrival runway exits
-    c = ["a1", "a2", "a3", "a4"]  # departure runway entries
+    a = ["l3", "l4", "l5", "l6"]  # left side departure runway in line with arrival runway exits
+    b = ["p2", "p3", "p4", "p5"]  # right side departure runway in line with arrival runway exits
+    c = ["a1", "a2", "a3", "a4"]  # arrival runway exits
+    d = ["17ra"]                  # departure entry node (same all ac)
 
-    route_edges = {
-        row["name"]: row["edges"]
-        for _, row in R.iterrows()
-    }
+    # route_edges = {
+    #     row["name"]: row["edges"]
+    #     for _, row in R.iterrows()
+    # }
 
     route_nodes = {
         row["name"]: set(row["route"])
@@ -211,10 +237,6 @@ def build_model(params):
     Sep_scaled.loc[:, Sep_scaled.columns != "type"] *= params.get("sep_multiplier", 1.0)
     V_scaled.loc[:,   V_scaled.columns != "type"]   *= params.get("vortex_multiplier", 1.0)
 
-    a = ["l3", "l4", "l5", "l6"]  # left side arrival runway exits
-    b = ["p2", "p3", "p4", "p5"]  # right side arrival runway exits
-    c = ["a1", "a2", "a3", "a4"]  # departure runway entries
-    d = "" # this should be the departure runway node
     U = {}
 
     for i in P_list:
@@ -253,9 +275,9 @@ def build_model(params):
 
     # Decision variables
     Z =         model.addVars(a_k_combinations, name = "Z", vtype=GRB.BINARY)
-    t_index =   [(aircraft_id, node) 
-                for aircraft_id, nodes in zip(P["id"], P["Upsilon"]) 
-                for node in nodes]
+    t_index =   [(aircraft_id, node) for aircraft_id, 
+                 nodes_set in zip(P["id"], 
+                 P["Upsilon"]) for node in nodes_set]
     t =         model.addVars(t_index, name="t", vtype=GRB.CONTINUOUS, lb=0)
     rho =       model.addVars([(P_list[i], P_list[j]) 
                             for i in range(len(P_list)) 
@@ -335,8 +357,6 @@ def build_model(params):
         name="sequence_consistency_upper",
     )
 
-
-
     # Constraint 10: sequencing
     model.addConstrs(
         (
@@ -359,7 +379,6 @@ def build_model(params):
         ),
         name="sequence_consistency_lower",
     )
-
 
     # Constraint 11 & 12: Overtaking constraints
     # Loop over all aircraft pairs
@@ -423,7 +442,7 @@ def build_model(params):
                             model.addConstr(
                                 Z[i, j, u] - Z[i, j, v] <= 2 -
                                 (
-                                    gp.quicksum(Gamma[i, r] for r in E[i] if (u, v) in E[i][r]) +
+                                gp.quicksum(Gamma[i, r] for r in E[i] if (u, v) in E[i][r]) +
                                     gp.quicksum(Gamma[j, r] for r in E[j] if (v, u) in E[j][r])
                                 ),
                                 name=f"headon_upper_{i}_{j}_{u}_{v}"
@@ -491,7 +510,7 @@ def build_model(params):
                                         )) * M,
                                             name="sep_situation1")
                                                                 
-            # Constraint 24 
+            # Constraint 24 #TODO check if length_edge((w, u)) should be length_edge((w,v))
             for r_j in E[j]:    
                 for (w,v) in E[j][r_j]: # All possible edges in routes of j
                     if v in U[((i,j))]: 
@@ -504,57 +523,46 @@ def build_model(params):
 
 
 
-    # Constraint 28: 
-    for i in D:            # all aircraft
+    # Constraint 28: Adds constraints for all routes in E
+    for i in D:           
         for j in D:
             if i == j:
                 continue
 
-            # --- find departure node of aircraft i ---
-            dep_i = None
-            for r_i in E[i]:                     # all routes of aircraft i
-                for node in E[i][r_i]:              # the nodes in that route
-                    if node in c:                # c = departure nodes
-                        dep_i = node
-                        break
-                if dep_i is not None:
-                    break
-
-            # --- find departure node of aircraft j ---
-            dep_j = None
-            for r_j in E[j]:
-                for node in R[r_j]:
-                    if node in c:
-                        dep_j = node
-                        break
-                if dep_j is not None:
-                    break
-
-            # If one aircraft is not a departure → skip constraint
-            if dep_i is None or dep_j is None:
-                continue
-
             # --- Add the constraint if both are departures ---
             model.addConstr(
-                t[j, dep_j] - t[i, dep_i] - V[i, j] >=
-                -M * (3 - rho[i, j] - Gamma[i, r_i] - Gamma[j, r_j]),
-                name=f"sep_{i}_{j}_{dep_i}_{dep_j}"
+                t[j,d] - t[i, d] - find_vortex_separation(i, j, V_scaled) >=
+                - (1 - rho[i, j]) * M,
+                name=f"vortex_sep_departure_{i}_{j}"
         )
 
-
     # Constraint 31
-    model.addConstrs((
-        t[j,b_k] - t[i,'17ra'] - Tidep >= - M * (1- rho[i,j])
-        for i in D 
-        for j in A 
-        for b_k in b), name = 'runway_crossing_arrival' )
+    for i in D:
+        for j in A:
+            # only consider nodes actually in j's route(s)
+            for b_k in b:
+                if b_k not in P.loc[P["id"] == j, "Upsilon"].iloc[0]:
+                    continue  # skip nodes not in j's route
+
+                model.addConstr(
+                    t[j, b_k] - t[i, '17ra'] - Tidep >= - M * (1 - rho[i,j]),
+                    name=f'runway_cross_arrival_{i}_{j}_{b_k}'
+                )
+
+
 
     # Constraint 32
-    model.addConstrs((
-        t[i,'17ra'] - t[j,a_k] - Tidep >= - M * (1- rho[i,j])
-        for i in D 
-        for j in A 
-        for a_k in a), name = 'runway_crossing_departure' )
+    for i in D:
+        for j in A:
+            # only consider nodes actually in j's route(s)
+            for a_k in a:
+                if a_k not in P.loc[P["id"] == j, "Upsilon"].iloc[0]:
+                    continue  # skip nodes not in j's route
+
+                model.addConstr(
+                    t[i, '17ra'] - t[j, a_k] >= - M * (1 - rho[j,i]),
+                    name=f'runway_cross_departure_{i}_{j}_{a_k}'
+                )
 
     # Constraint 33
     for l in L:
@@ -579,9 +587,10 @@ def build_model(params):
     handles = {
     "Gamma": Gamma,
     "t": t,
-    "Z": Z
+    "Z": Z,
+    "R": R
     }
-    return model, handles
+    return model, handles, P, P_list
 
 
 # For sensitivity analysis
@@ -593,7 +602,3 @@ __all__ = [
 ]
 
 
-# except gp.GurobiError as e:
-# print(f"Gurobi Error: {e}")
-# except Exception as e:
-# print(f"Error: {e}")

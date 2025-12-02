@@ -3,16 +3,15 @@ import matplotlib.pyplot as plt
 
 from Operations_assignment import (
     build_model,
-    P_list,
-    P,
     get_first_node
 )
 
-def extract_solution(model, handles):
+def extract_solution(handles, P, P_list):
     """Extract aircraft route choices, times, delays, etc."""
     Gamma = handles["Gamma"]
     t     = handles["t"]
     Z     = handles["Z"]
+    R     = handles["R"]
 
     results = []
 
@@ -39,7 +38,7 @@ def extract_solution(model, handles):
             else:               
                 sched_time = P.loc[P["id"] == ac, "PBT"].iloc[0]
 
-            start_node = get_first_node(ac)
+            start_node = get_first_node(ac, P, R, handles["Gamma"])
 
             delay = node_times[start_node] - sched_time
         else:
@@ -63,7 +62,7 @@ def run_sensitivity(param_name, values, base_params):
         params = base_params.copy()
         params[param_name] = val
 
-        model, handles = build_model(params)
+        model, handles, P, P_list = build_model(params)
         model.optimize()
 
         entry = {
@@ -74,7 +73,7 @@ def run_sensitivity(param_name, values, base_params):
         }
 
         if model.Status == 2:   
-            sol = extract_solution(model, handles)
+            sol = extract_solution(handles, P, P_list)
 
             for ac_data in sol:
                 row = entry.copy()
@@ -114,22 +113,28 @@ if __name__ == "__main__":
 
     base_params = {
         "separation_multiplier": 1.0,
+        "vortex_multiplier": 1.0,
         "taxi_speed_multiplier": 1.0,
         "Tidep": 55,
         "M": 1e4
     }
 
-    # 1. Sensitivity: Separation Minima
+    # 1. Sensitivity: Separation Minima Sep
     sep_values = [0.8, 1.0, 1.2, 1.4]
     df_sep = run_sensitivity("separation_multiplier", sep_values, base_params)
     plot_sensitivity(df_sep, "separation_multiplier")
 
-    # 2. Sensitivity: Taxi Speed
+    # 2. Sensitivity: Separation Minima V
+    V_values = [0.8, 1.0, 1.2, 1.4]
+    df_V = run_sensitivity("vortex_multiplier", V_values, base_params)
+    plot_sensitivity(df_V, "vortex_multiplier")
+
+    # 3. Sensitivity: Taxi Speed
     speed_values = [0.8, 1.0, 1.2]
     df_speed = run_sensitivity("taxi_speed_multiplier", speed_values, base_params)
     plot_sensitivity(df_speed, "taxi_speed_multiplier")
 
-    # 3. Sensitivity: Departure Window (Tidep)
+    # 4. Sensitivity: Departure Window (Tidep)
     tidep_values = [40, 55, 70]
     df_tidep = run_sensitivity("Tidep", tidep_values, base_params)
     plot_sensitivity(df_tidep, "Tidep")
