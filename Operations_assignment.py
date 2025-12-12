@@ -12,26 +12,34 @@ def build_model(params):
 
         route_arr_1a = ["a1", "p2", "p3", "p4", "p5", "p6", "p7", "p8", "l9", "l8", "l7", "l6", "k6", "d5"]
         route_arr_1b = ["a1", "p2", "17rc", "l3", "k3", "d2"]
+        route_arr_2a = ["a3", "p4", "17re", "l5", "k5", "d4"]
+        route_arr_2b = ["a3", "p4", "p5", "p6", "p7", "p8", "l9", "l8", "l7", "l6", "l5", "k5", "d4"]
 
-        route_dep_1 = ["d2", "k3", "l3", "l2", "l1", "17ra"]
-
-
-        R = pd.DataFrame([{"name": "route_arr_1a", "route" : route_arr_1a},
-                                {"name": "route_arr_1b", "route" : route_arr_1b},
-                                {"name": "route_dep_1", "route" : route_dep_1}])
-
+        route_dep_1 = ["d1", "k2", "l2", "l1", "17ra"]
+        route_dep_2 = ["d3", "k4", "l4", "l3", "l2", "l1", "17ra"]
 
         def edges(route, directed=True):
             pairs = list(zip(route, route[1:]))
             return pairs if directed else [set(p) for p in pairs]
 
+        all_routes = [
+            ("route_arr_1a", "A", route_arr_1a),
+            ("route_arr_1b", "A", route_arr_1b),
+            ("route_arr_2a", "A", route_arr_2a),
+            ("route_arr_2b", "A", route_arr_2b),
+            ("route_dep_1", "D", route_dep_1),
+            ("route_dep_2", "D", route_dep_2),]
+
         R = pd.DataFrame([
-            {"name": "route_arr_1a", "A/D": "A", "route": route_arr_1a, "edges": edges(route_arr_1a, directed=True)},
-            {"name": "route_arr_1b", "A/D": "A", "route": route_arr_1b, "edges": edges(route_arr_1b, directed=True)},
-            {"name": "route_dep_1",  "A/D": "D", "route": route_dep_1,  "edges": edges(route_dep_1, directed=True)},
+            {"name": name,
+            "A/D": AD,
+            "route": route,
+            "edges": edges(route, directed=True)}
+            for (name, AD, route) in all_routes
         ])
 
         return R
+
 
     def build_E(P, R):
         E = {}
@@ -144,6 +152,7 @@ def build_model(params):
 
     M = params.get("M", 10000)
     Suv_max = (30 * 0.514444) * params.get("taxi_speed_multiplier", 1.0)         # max speed in m/s
+    Suv_min = 0.1                                                                # Arbitrary min taxi speed -> enforces non-zero positive
     # e_l = 3                                                                      # edge capacity for all runway exits
     Tidep = params.get("Tidep", 50)
 
@@ -254,8 +263,11 @@ def build_model(params):
                             vtype=GRB.BINARY, name="rho")
     Gamma =     model.addVars([(P_list[i], R.loc[r, "name"]) 
                             for i in range(len(P_list)) 
-                            for r in range(len(R))], 
+                            for r in range(len(R))
+                            if R.loc[r, "name"] in P_routes[P_list[i]]], 
                             vtype=GRB.BINARY, name="Gamma")
+
+
 
 
     # --- Objective Function ---
@@ -451,10 +463,21 @@ def build_model(params):
                                         for r in routes_with_edge((u, v)))) +
                     gp.quicksum(Gamma[i, r] 
                                 for r in routes_with_edge((u, v)))) ,
-                    name=f"taxi_speed_lower_{i}_{u}_{v}"
+                    name=f"max_taxi_speed_{i}_{u}_{v}"
                 )
 
-    # Constraint 20: chosen not to be constrained by min taxi speed
+    # Constraint 20: constrained by min taxi speed to enforce positive non-zero speed
+        for i in P_list:
+            for r_i in E[i]:              # aircraft i's possible routes
+                for (u, v) in E[i][r_i]:  # edges in route r_i
+                    model.addConstr(
+                        t[i, v] - t[i, u] >= (length_edge((u, v)) / Suv_min) *
+                        (M *(gp.quicksum(Gamma[i, r] 
+                                            for r in routes_with_edge((u, v)))) - M +
+                        gp.quicksum(Gamma[i, r] 
+                                    for r in routes_with_edge((u, v)))) ,
+                        name=f"min_taxi_speed_{i}_{u}_{v}"
+                    )
 
     # Constraint 21,22 are non-linear
 
@@ -528,19 +551,20 @@ def build_model(params):
             for j in A:
                 if i == j:
                     continue
+                    
+                if P.loc[P['id'] == i, "ETD"].iloc[0] <= P.loc[P['id'] == j, "ETD"].iloc[0]:
+                    # i uses edge l ?
+                    i_uses_l = any(l == e for route in E[i].values() for e in route)
+                    # j uses edge l ?
+                    j_uses_l = any(l == e for route in E[j].values() for e in route)
 
-                # i uses edge l ?
-                i_uses_l = any(l == e for route in E[i].values() for e in route)
-                # j uses edge l ?
-                j_uses_l = any(l == e for route in E[j].values() for e in route)
+                    if i_uses_l and j_uses_l:
+                        ETD_j = P.loc[P["id"] == j, "ETD"].iloc[0]
 
-                if i_uses_l and j_uses_l:
-                    ETD_j = P.loc[P["id"] == j, "ETD"].iloc[0]
-
-                    model.addConstr(
-                        t[i, l[0]] <= ETD_j,
-                        name=f"exit_capacity_{i}_{j}_{l}"
-                    )
+                        model.addConstr(
+                            t[i, l[0]] <= ETD_j,
+                            name=f"exit_capacity_{i}_{j}_{l}"
+                        )
 
     model.optimize()
     print("Status:", model.status)
