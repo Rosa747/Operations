@@ -11,7 +11,7 @@ def build_model(params):
     def create_routes():
 
         route_arr_1a = ["a1", "p2", "p3", "p4", "p5", "p6", "p7", "p8", "l9", "l8", "l7", "l6", "k6", "d5"]
-        route_arr_1b = ["a1", "p2", "17rc", "l3", "k3", "d2"]
+        route_arr_1b = ["a1", "p2", "p3", "p4", "p5", "17rf", "l6", "k6", "d5"]
         route_arr_2a = ["a3", "p4", "17re", "l5", "k5", "d4"]
         route_arr_2b = ["a3", "p4", "p5", "p6", "p7", "p8", "l9", "l8", "l7", "l6", "l5", "k5", "d4"]
 
@@ -28,7 +28,7 @@ def build_model(params):
             ("route_arr_2a", "A", route_arr_2a),
             ("route_arr_2b", "A", route_arr_2b),
             ("route_dep_1", "D", route_dep_1),
-            ("route_dep_2", "D", route_dep_2),]
+            ("route_dep_2", "D", route_dep_2)]
 
         R = pd.DataFrame([
             {"name": name,
@@ -127,7 +127,7 @@ def build_model(params):
 
     #     # Return the last node of that route
     #     return R.loc[R["name"] == chosen_route, "route"].iloc[0][-1]
-
+    
     '''
     TODO redefine route1 and route2 to set of all possible routes for ac i and ac j
     def get_common_nodes(route1, route2):
@@ -152,7 +152,7 @@ def build_model(params):
 
     M = params.get("M", 10000)
     Suv_max = (30 * 0.514444) * params.get("taxi_speed_multiplier", 1.0)         # max speed in m/s
-    Suv_min = 0.1                                                                # Arbitrary min taxi speed -> enforces non-zero positive
+    Suv_min = 0.1                                                               # Arbitrary min taxi speed -> enforces non-zero positive
     # e_l = 3                                                                      # edge capacity for all runway exits
     Tidep = params.get("Tidep", 50)
 
@@ -271,12 +271,16 @@ def build_model(params):
 
 
     # --- Objective Function ---
+
     model.setObjective(
-        gp.quicksum( 
-        gp.quicksum(Gamma[i, route] * (t[i,last_node(route)] - t[i, first_node(route)]) 
-                    for route in P.loc[P["id"] == i, "routes"].iloc[0]
-                                   )
-                                   for i in P_list), GRB.MINIMIZE)
+    gp.quicksum(
+        gp.quicksum(
+            Gamma[i, r] * t[i, last_node(r)]
+            for r in P_routes[i]
+        )
+        for i in P_list
+    ),
+    GRB.MINIMIZE)
 
     # --- Constraints ---
 
@@ -433,51 +437,50 @@ def build_model(params):
                             )
 
     # Constraint 15: not scheduled before estimated touchdown time
-    for j in A: 
-        model.addConstr(
-            
-                gp.quicksum( t[j, first_node(route)] * Gamma[j, route]
-                            for route in P.loc[P["id"] == j, "routes"].iloc[0]) 
-                            >= P.loc[P["id"] == j, "ETD"].iloc[0],
-            name="arrival_time_window_{j}"
-        )
 
-    # Constraint 16: Not scheduled before planned push-back time
-    for i in D: 
-        model.addConstr(
-            
-                gp.quicksum( t[i, first_node(route)] * Gamma[i, route]
-                            for route in P.loc[P["id"] == i, "routes"].iloc[0]) 
-                            >= P.loc[P["id"] == i, "PBT"].iloc[0],
-            name="departure_time_window_{i}"
-        )
+
+    for j in A:
+        for r in P_routes[j]:
+            model.addConstr(
+                t[j, first_node(r)] >= P.loc[P["id"] == j, "ETD"].iloc[0] - M * (1 - Gamma[j,r]),
+                name=f"arrival_time_window_{j}_{r}"
+            )
+
+
+    for i in D:
+        for r in P_routes[i]:
+            model.addConstr(
+                t[i, first_node(r)] >= P.loc[P["id"] == i, "PBT"].iloc[0] - M * (1 - Gamma[i,r]),
+                name=f"departure_time_window_{i}_{r}"
+            )
+
 
     # Constraint 17,18 are not linearized: constraint 19,20 are linearized version
-    # Constraint 19: max taxi speed
+    # Constraint 19: min taxi speed
     for i in P_list:
         for r_i in E[i]:              # aircraft i's possible routes
             for (u, v) in E[i][r_i]:  # edges in route r_i
                 model.addConstr(
-                    t[i, v] - t[i, u] <= (length_edge((u, v)) / Suv_max) *
+                    t[i, v] - t[i, u] <= (length_edge((u, v)) / Suv_min) *
                     (M -M *(gp.quicksum(Gamma[i, r] 
                                         for r in routes_with_edge((u, v)))) +
+                    gp.quicksum(Gamma[i, r]
+                                for r in routes_with_edge((u, v)))) ,
+                    name=f"min_taxi_speed_{i}_{u}_{v}"
+                )
+
+    # # Constraint 20: constrained by max taxi speed to enforce positive non-zero speed
+    for i in P_list:
+        for r_i in E[i]:              # aircraft i's possible routes
+            for (u, v) in E[i][r_i]:  # edges in route r_i
+                model.addConstr(
+                    t[i, v] - t[i, u] >= (length_edge((u, v)) / Suv_max) *
+                    (M *(gp.quicksum(Gamma[i, r] 
+                                        for r in routes_with_edge((u, v)))) - M +
                     gp.quicksum(Gamma[i, r] 
                                 for r in routes_with_edge((u, v)))) ,
                     name=f"max_taxi_speed_{i}_{u}_{v}"
                 )
-
-    # Constraint 20: constrained by min taxi speed to enforce positive non-zero speed
-        for i in P_list:
-            for r_i in E[i]:              # aircraft i's possible routes
-                for (u, v) in E[i][r_i]:  # edges in route r_i
-                    model.addConstr(
-                        t[i, v] - t[i, u] >= (length_edge((u, v)) / Suv_min) *
-                        (M *(gp.quicksum(Gamma[i, r] 
-                                            for r in routes_with_edge((u, v)))) - M +
-                        gp.quicksum(Gamma[i, r] 
-                                    for r in routes_with_edge((u, v)))) ,
-                        name=f"min_taxi_speed_{i}_{u}_{v}"
-                    )
 
     # Constraint 21,22 are non-linear
 
@@ -565,14 +568,39 @@ def build_model(params):
                             t[i, l[0]] <= ETD_j,
                             name=f"exit_capacity_{i}_{j}_{l}"
                         )
+    
+    model.setParam(gp.GRB.Param.DualReductions, 0)
+    model.Params.OutputFlag = 1  # just to make sure logging is on
 
     model.optimize()
+    status = model.status
     print("Status:", model.status)
     print("Status name:", {2:"OPTIMAL", 3:"INFEASIBLE", 4:"INF_OR_UNBD", 5:"UNBOUNDED", 9:"TIME_LIMIT"}.get(model.status, "OTHER"))
     print("SolCount:", model.SolCount)
 
+    if model.status == gp.GRB.INFEASIBLE:
+        model.computeIIS()
+        model.write("model.ilp")
+
     model.write("model.lp")
 
+    # Prepare a relaxation
+    relaxed = model.relax()
+
+    # Make Gurobi give you more info
+    relaxed.Params.DualReductions = 0
+    relaxed.Params.InfUnbdInfo = 1
+    relaxed.Params.Method = 1
+    relaxed.Params.Presolve = 0
+
+    # Optimize the LP relaxation
+    relaxed.optimize()
+
+    # If unbounded, print the ray
+    if relaxed.Status == GRB.UNBOUNDED:
+        for v in relaxed.getVars():
+            if abs(v.UnbdRay) > 1e-10:
+                print(v.varName, v.UnbdRay)
 
     
     handles = {
@@ -581,6 +609,7 @@ def build_model(params):
     # "Z": {key : var.X for key, var in Z.items()},
     "R": R
     }
+
     return model, handles, P, P_list
 
 
@@ -593,7 +622,54 @@ params = {
 
 model, handles, P, P_list = build_model(params)
 
-print(handles)
+
+def export_solution(model, handles, P, R, filename="solution_output.xlsx"):
+    Gamma = handles["Gamma"]
+    t = handles["t"]
+
+    # Helper to get route nodes
+    route_map = dict(zip(R["name"], R["route"]))
+
+    writer = pd.ExcelWriter(filename, engine="xlsxwriter")
+
+    for acft in P["id"]:
+        # --- 1. Identify chosen route ---
+        chosen_route = None
+        for r in P.loc[P["id"] == acft, "routes"].iloc[0]:
+            if Gamma[acft, r].X > 0.5:
+                chosen_route = r
+                break
+
+        if chosen_route is None:
+            # Should never happen, but safe fallback
+            df = pd.DataFrame({"ERROR": ["No route chosen"]})
+            df.to_excel(writer, sheet_name=acft, index=False)
+            continue
+
+        # --- 2. Get nodes of chosen route ---
+        nodes = route_map[chosen_route]
+
+        # --- 3. Extract times at those nodes ---
+        rows = []
+        for node in nodes:
+            var = t.get((acft, node))
+            if var is not None:
+                rows.append({"Node": node, "Time": var.X})
+            else:
+                rows.append({"Node": node, "Time": None})
+
+        df = pd.DataFrame(rows)
+
+        # Add route name to sheet header by writing in row 0
+        df.to_excel(writer, sheet_name=acft, index=False, startrow=1)
+        writer.sheets[acft].write(0, 0, f"Chosen route: {chosen_route}")
+
+    writer.close()
+    print(f"\n✔️ Solution exported to: {filename}\n")
+    return
+
+
+export_solution(model, handles, P, handles["R"])
 
 
 
