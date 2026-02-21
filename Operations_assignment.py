@@ -163,9 +163,24 @@ def build_model(params):
     # --- Create Datasets ---
 
     # --- Aircraft ---
-    P = pd.DataFrame([{ "id": "AC1", "A/D": "A", "ETD": 100, "WTC": "large"}, #ETD in sec
-                    { "id": "AC2", "A/D": "A", "ETD": 200, "WTC": "large"}, #ETD in sec
-                        { "id": "AC3", "A/D": "D", "PBT": 150, "WTC": "large"}]) #PBT in sec
+
+    
+
+
+    flight_schedule_arrivals = pd.read_excel('flight_schedule_test.xlsx', sheet_name='A', header = 0)
+    flight_schedule_departures = pd.read_excel('flight_schedule_test.xlsx', sheet_name='D', header = 0)
+
+    P_arrivals = pd.DataFrame(flight_schedule_arrivals)
+    P_departures = pd.DataFrame(flight_schedule_departures)
+    # print("P_arrivals:\n", P_arrivals)
+    # print("P_departures:\n", P_departures)
+
+    P = pd.concat([P_arrivals, P_departures], ignore_index=True)
+    print("Combined P:\n", P)
+
+    # P = pd.DataFrame([{ "id": "AC1", "A/D": "A", "ETD": 100, "WTC": "large"}, #ETD in sec
+    #             { "id": "AC2", "A/D": "A", "ETD": 200, "WTC": "large"}, #ETD in sec
+    #                 { "id": "AC3", "A/D": "D", "PBT": 150, "WTC": "large"}]) #PBT in sec
 
     P["routes"] = None
     P["Upsilon"] = None
@@ -192,8 +207,7 @@ def build_model(params):
     a = ["l3", "l4", "l5", "l6"]  # left side departure runway in line with arrival runway exits
     b = ["p2", "p3", "p4", "p5"]  # right side departure runway in line with arrival runway exits
     c = ["a1", "a2", "a3", "a4"]  # arrival runway exits
-    d = ["17ra"]                  # departure entry node (same all ac)
-
+    d = "17ra"                # departure entry node (same all ac)
     # route_edges = {
     #     row["name"]: row["edges"]
     #     for _, row in R.iterrows()
@@ -621,7 +635,10 @@ params = {
     "vortex_multiplier": 1.0}
 
 model, handles, P, P_list = build_model(params)
-
+# Write all variables to a txt file for inspection
+with open("solution_variables.txt", "w") as f:
+    for var in model.getVars():
+        f.write(f"{var.varName}: {var.X}\n")
 
 def export_solution(model, handles, P, R, filename="solution_output.xlsx"):
     Gamma = handles["Gamma"]
