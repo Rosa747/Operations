@@ -13,7 +13,7 @@ def build_model(params):
         route_arr_1a = ["a1", "p2", "p3", "p4", "p5", "p6", "p7", "p8", "l9", "l8", "l7", "l6", "k6", "d5"]
         route_arr_1b = ["a1", "p2", "p3", "p4", "p5", "17rf", "l6", "k6", "d5"]
         route_arr_2a = ["a3", "p4", "17re", "l5", "k5", "d4"]
-        route_arr_2b = ["a3", "p4", "p5", "p6", "p7", "p8", "l9", "l8", "l7", "l6", "l5", "k5", "d4"]
+        route_arr_2b = ["a3", "p4", "p5", "p6", "p7", "p8", "l9", "k8","l8", "l7", "l6", "l5", "k5", "d4"]
 
         route_dep_1 = ["d1", "k2", "l2", "l1", "17ra"]
         route_dep_2 = ["d3", "k4", "l4", "l3", "l2", "l1", "17ra"]
@@ -167,8 +167,11 @@ def build_model(params):
     
 
 
-    flight_schedule_arrivals = pd.read_excel('flight_schedule_test.xlsx', sheet_name='A', header = 0)
-    flight_schedule_departures = pd.read_excel('flight_schedule_test.xlsx', sheet_name='D', header = 0)
+    flight_schedule_arrivals = pd.read_excel('flight_schedule.xlsx', sheet_name='A', header = 0)
+    flight_schedule_departures = pd.read_excel('flight_schedule.xlsx', sheet_name='D', header = 0)
+
+
+
 
     P_arrivals = pd.DataFrame(flight_schedule_arrivals)
     P_departures = pd.DataFrame(flight_schedule_departures)
@@ -203,11 +206,14 @@ def build_model(params):
     
     # --- Node & Edge dataset ---
     E = build_E(P, R)
-    L = [("p2","a1"), ("p3","a2"), ("p4","a3"), ("p5","a4")]
+    # L = [("p2","a1"), ("p3","a2"), ("p4","a3"), ("p5","a4")] # Exit taxiways of arrival runway
+    L = [("a1","p2"), ("a2","p3"), ("a3","p4"), ("a4","p5")] # Exit taxiways of arrival runway
     a = ["l3", "l4", "l5", "l6"]  # left side departure runway in line with arrival runway exits
-    b = ["p2", "p3", "p4", "p5"]  # right side departure runway in line with arrival runway exits
+    b = ["17rc", "17rd", "17re", "17rf"]  # right side departure runway in line with arrival runway exits
     c = ["a1", "a2", "a3", "a4"]  # arrival runway exits
     d = "17ra"                # departure entry node (same all ac)
+    #b = ["p2", "p3", "p4", "p5"]
+    
     # route_edges = {
     #     row["name"]: row["edges"]
     #     for _, row in R.iterrows()
@@ -579,10 +585,19 @@ def build_model(params):
                         ETD_j = P.loc[P["id"] == j, "ETD"].iloc[0]
 
                         model.addConstr(
-                            t[i, l[0]] <= ETD_j,
+                            t[i, l[1]] <= ETD_j,
                             name=f"exit_capacity_{i}_{j}_{l}"
                         )
     
+    # Eigen constraint: rho_i,j + rho_j,i <= 1
+    for i in P_list:
+        for j in P_list:
+            if i != j:
+                model.addConstr(
+                    rho[i, j] + rho[j, i] == 1,
+                    name=f"runway_crossing_consistency_{i}_{j}"
+                )
+
     model.setParam(gp.GRB.Param.DualReductions, 0)
     model.Params.OutputFlag = 1  # just to make sure logging is on
 

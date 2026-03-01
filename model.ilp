@@ -1,34 +1,18 @@
 \ Model test_copy
 \ LP format - for model browsing. Use MPS format to capture full model detail.
-\ Signature: 0xc0382f952b649e7b
+\ Signature: 0x55296dbbaeb86e6
 Minimize
  
 Subject To
- t_fix_high_AC1_a3_route_arr_1a: t[AC1,a3] - 10000 Gamma[AC1,route_arr_1a]
-   <= 0
- t_fix_high_AC1_l7_route_arr_1b: t[AC1,l7] - 10000 Gamma[AC1,route_arr_1b]
-   <= 0
- t_fix_high_AC1_d5_route_arr_2b: t[AC1,d5] - 10000 Gamma[AC1,route_arr_2b]
-   <= 0
- time_forward_AC1_route_arr_2b_l8_l7: t[AC1,l7] - t[AC1,l8]
-   - 10000 Gamma[AC1,route_arr_2b] >= -10000
- one_route_for_aircraft[AC1]: Gamma[AC1,route_arr_1a]
-   + Gamma[AC1,route_arr_1b] + Gamma[AC1,route_arr_2a]
-   + Gamma[AC1,route_arr_2b] = 1
- arrival_time_window_AC1_route_arr_2a: t[AC1,a3]
-   - 10000 Gamma[AC1,route_arr_2a] >= -9900
- max_taxi_speed_AC1_l9_l8: - t[AC1,l9] + t[AC1,l8]
-   - 518410.8150417408 Gamma[AC1,route_arr_1a]
-   - 518410.8150417408 Gamma[AC1,route_arr_2b] >= -518358.9791438265
- max_taxi_speed_AC1_k6_d5: t[AC1,d5] - t[AC1,k6]
-   - 64801.3518802176 Gamma[AC1,route_arr_1a]
-   - 64801.3518802176 Gamma[AC1,route_arr_1b] >= -64794.87239297831
+ one_route_for_aircraft[AC_A_1]: Gamma[AC_A_1,route_arr_1a]
+   + Gamma[AC_A_1,route_arr_2a] = 1
+ max_taxi_speed_AC_A_1_p3_p4: t[AC_A_1,p4] - t[AC_A_1,p3]
+   - 259205.4075208704 Gamma[AC_A_1,route_arr_1a] >= -259179.4895719132
+ max_taxi_speed_AC_A_1_a3_p4: t[AC_A_1,p4] - t[AC_A_1,a3]
+   - 204919.8673995223 Gamma[AC_A_1,route_arr_2a] >= -204899.3774617762
+ exit_capacity_AC_A_1_AC_A_2_('a3',_'p4'): t[AC_A_1,p4] <= 15
 Bounds
- t[AC1,l7] free
- t[AC1,a3] free
- t[AC1,d5] free
- t[AC1,l8] free
+ t[AC_A_1,p4] free
 Binaries
- Gamma[AC1,route_arr_1a] Gamma[AC1,route_arr_1b] Gamma[AC1,route_arr_2a]
- Gamma[AC1,route_arr_2b]
+ Gamma[AC_A_1,route_arr_1a] Gamma[AC_A_1,route_arr_2a]
 End
