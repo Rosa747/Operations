@@ -1,3 +1,18 @@
+"""
+This script is made for the course AE4441 Operations Optimization.
+This is the main file. Run this to test the model.
+Results are exported to the solution_output.xlsx file.
+Use the file results_check.py for an better overview of the times at each node after this script has been run.
+
+Authors:
+
+Jim Ruysenaars      (5309980)
+Lynn Vorgers        (5089301)
+Rosa de Jong        (5016495)
+
+"""
+
+# Import packages
 import gurobipy as gp
 from gurobipy import GRB
 import numpy as np
@@ -6,29 +21,38 @@ import pandas as pd
 nodes_df = pd.read_excel('Node_operations.xlsx')
 
 def build_model(params):
-
-    # Function definitions
+    # This is the main function that creates the Gurobi model
+    
+    # =========== Helper functions ===========
     def create_routes():
 
+        # Arrival routes
         route_arr_1a = ["a1", "p2", "p3", "p4", "p5", "p6", "p7", "p8", "l9", "l8", "l7", "l6", "k6", "d5"]
         route_arr_1b = ["a1", "p2", "p3", "p4", "p5", "17rf", "l6", "k6", "d5"]
-        route_arr_2a = ["a3", "p4", "17re", "l5", "k5", "d4"]
-        route_arr_2b = ["a3", "p4", "p5", "p6", "p7", "p8", "l9", "k8","l8", "l7", "l6", "l5", "k5", "d4"]
+        route_arr_2a = ["a3", "p4", "17re", "l5", "l4", "l3", "l2", "k2", "d1"]
+        route_arr_2b = ["a3", "p4", "p5", "p6", "p7", "p8", "l9","l8", "l7", "l6", "l5", "l4", "l3", "l2", "k2", "d1"]
 
+        # Departure routes
         route_dep_1 = ["d1", "k2", "l2", "l1", "17ra"]
         route_dep_2 = ["d3", "k4", "l4", "l3", "l2", "l1", "17ra"]
+        route_dep_3 = ["d4", "k5", "l5", "l4", "l3", "l2", "l1", "17ra"]
+        route_dep_4 = ["d5", "k6", "l6", "l5", "l4", "l3", "l2", "l1", "17ra"]
+
 
         def edges(route, directed=True):
             pairs = list(zip(route, route[1:]))
             return pairs if directed else [set(p) for p in pairs]
 
+        # Load all routes
         all_routes = [
             ("route_arr_1a", "A", route_arr_1a),
             ("route_arr_1b", "A", route_arr_1b),
             ("route_arr_2a", "A", route_arr_2a),
             ("route_arr_2b", "A", route_arr_2b),
             ("route_dep_1", "D", route_dep_1),
-            ("route_dep_2", "D", route_dep_2)]
+            ("route_dep_2", "D", route_dep_2),
+            ("route_dep_3", "D", route_dep_3),
+            ("route_dep_4", "D", route_dep_4)]
 
         R = pd.DataFrame([
             {"name": name,
@@ -37,10 +61,9 @@ def build_model(params):
             "edges": edges(route, directed=True)}
             for (name, AD, route) in all_routes
         ])
-
         return R
 
-
+    # Creaet the E dataset: E[i][r] = list of edges in route r of aircraft i
     def build_E(P, R):
         E = {}
         for _, row in P.iterrows():
@@ -55,19 +78,23 @@ def build_model(params):
 
     nodes = nodes_df["name"].tolist()
 
+    # Functioon to get the first node of a route for an aircraft
     def routes_with_edge(edge):
         return R.loc[R["edges"].apply(lambda edge_list: edge in edge_list), "name"].tolist()
 
+    # Functions to find separation minima from the Sep and V matrices
     def find_separation(i, j, Sep_matrix):
         wtc_i = P.loc[P["id"] == i, "WTC"].item()
         wtc_j = P.loc[P["id"] == j, "WTC"].item()
         return Sep_matrix.loc[Sep_matrix["type"] == wtc_j, wtc_i].item()
 
+    # Function to find vortex separation minima from the V matrix
     def find_vortex_separation(i, j, V_matrix):
         wtc_i = P.loc[P["id"] == i, "WTC"].item()
         wtc_j = P.loc[P["id"] == j, "WTC"].item()
         return V_matrix.loc[V_matrix["type"] == wtc_j, wtc_i].item()
 
+    # Function to calculate the length of an edge based on node coordinates
     def length_edge(edge):
         u, v = edge
         delta_x = nodes_df.loc[nodes_df['name'] == v, 'x'].values[0] - nodes_df.loc[nodes_df['name'] == u, 'x'].values[0]
@@ -75,9 +102,8 @@ def build_model(params):
         length = np.sqrt(delta_x ** 2 + delta_y ** 2)
         return length
 
-    # Assume P has a column "routes" which is a list of route names
+    # Function to fill the Upsilon column in P: set of nodes that each aircraft can use based on its possible routes
     def fill_upsilon(P, R):
-        # Create a dictionary mapping route name -> route nodes
         route_dict = dict(zip(R["name"], R["route"]))
         
         # For each row in P, build the set of unique nodes
@@ -86,104 +112,34 @@ def build_model(params):
         )
         return P
 
-    # def get_first_node(aircraft_id, P, R, Gamma):
-    #     """
-    #     Returns the first node of the chosen route for the aircraft.
-    #     """
-    #     # Find the chosen route for this aircraft
-    #     chosen_route = None
-    #     for r in P.loc[P["id"] == aircraft_id, "routes"].iloc[0]:
-    #         if Gamma[aircraft_id, r].X > 0.5:
-    #             chosen_route = r
-    #             break
-
-    #     if chosen_route is None:
-    #         raise ValueError(f"No route chosen for aircraft {aircraft_id}")
-        
-    #      # Return the last node of that route
-    #     return R.loc[R["name"] == chosen_route, "route"].iloc[0][0]
-
+    # Function to get the first node of a route for an aircraft
     def first_node(r_name):
         """Return the first node of route r_name"""
         return R.loc[R["name"] == r_name, "route"].iloc[0][0]
     
+    # Function to get the last node of a route for an aircraft
     def last_node(r_name):
         """Return the last node of route r_name"""
         return R.loc[R["name"] == r_name, "route"].iloc[0][-1]
 
-    # def get_last_node(aircraft_id, P, R, Gamma):
-    #     """
-    #     Returns the last node of the chosen route for the aircraft.
-    #     """
-    #     # Find the chosen route
-    #     chosen_route = None
-    #     for r in P.loc[P["id"] == aircraft_id, "routes"].iloc[0]:
-    #         if Gamma[aircraft_id, r].X > 0.5:
-    #             chosen_route = r
-    #             break
-
-    #     if chosen_route is None:
-    #         raise ValueError(f"No route chosen for aircraft {aircraft_id}")
-
-    #     # Return the last node of that route
-    #     return R.loc[R["name"] == chosen_route, "route"].iloc[0][-1]
-    
-    '''
-    TODO redefine route1 and route2 to set of all possible routes for ac i and ac j
-    def get_common_nodes(route1, route2):
-        return list(set(route1) & set(route2))
-
-        Ideetjes die het waard zijn om te onthouden:
-        Lamda?_i = set of edges for aircraft i -> gebruiken wij E voor
-        -> veel dubbele in voor als we veel routes hebben met gedeelde edges
-        -> kan computationally heavy zijn
-
-        Gekozen om de departure node voor alle aircraft hetzelfde te houden
-        -> 17ra
-        -> relevant voor constraint 28
-    
-        '''
-
-
     # --- Simulation Parameters ---
-    # n_aircraft = 2  # or len(aircraft_list) if you load data
-    # n_nodes = 42 # number of nodes in the network (0,1,2,3) arrival (4,5,6,7,8) departure (9...) taxiway nodes
-    # n_routes = 3  # number of possible routes
-
     M = params.get("M", 10000)
-    Suv_max = (30 * 0.514444) * params.get("taxi_speed_multiplier", 1.0)         # max speed in m/s
+    Suv_max = (30 * 0.514444) * params.get("taxi_speed_multiplier", 1.0)        # max speed in m/s
     Suv_min = 0.1                                                               # Arbitrary min taxi speed -> enforces non-zero positive
-    # e_l = 3                                                                      # edge capacity for all runway exits
     Tidep = params.get("Tidep", 50)
 
 
     # Create dataframes:
     R = create_routes()     # Set of routes for aircraft i
 
-    # --- Create Datasets ---
+    # =========== Create datasets ===========
 
-    # --- Aircraft ---
-
-    
-
-
+    # Aircraft datasets
     flight_schedule_arrivals = pd.read_excel('flight_schedule.xlsx', sheet_name='A', header = 0)
     flight_schedule_departures = pd.read_excel('flight_schedule.xlsx', sheet_name='D', header = 0)
-
-
-
-
     P_arrivals = pd.DataFrame(flight_schedule_arrivals)
     P_departures = pd.DataFrame(flight_schedule_departures)
-    # print("P_arrivals:\n", P_arrivals)
-    # print("P_departures:\n", P_departures)
-
     P = pd.concat([P_arrivals, P_departures], ignore_index=True)
-    print("Combined P:\n", P)
-
-    # P = pd.DataFrame([{ "id": "AC1", "A/D": "A", "ETD": 100, "WTC": "large"}, #ETD in sec
-    #             { "id": "AC2", "A/D": "A", "ETD": 200, "WTC": "large"}, #ETD in sec
-    #                 { "id": "AC3", "A/D": "D", "PBT": 150, "WTC": "large"}]) #PBT in sec
 
     P["routes"] = None
     P["Upsilon"] = None
@@ -204,20 +160,13 @@ def build_model(params):
     # List with tuples of aircraft ID combinations
     a_k_combinations = [(i, j, node) for i in P["id"] for j in P["id"] if i != j for node in nodes]
     
-    # --- Node & Edge dataset ---
+    # Nodes and edges dataset
     E = build_E(P, R)
-    # L = [("p2","a1"), ("p3","a2"), ("p4","a3"), ("p5","a4")] # Exit taxiways of arrival runway
-    L = [("a1","p2"), ("a2","p3"), ("a3","p4"), ("a4","p5")] # Exit taxiways of arrival runway
-    a = ["l3", "l4", "l5", "l6"]  # left side departure runway in line with arrival runway exits
-    b = ["17rc", "17rd", "17re", "17rf"]  # right side departure runway in line with arrival runway exits
-    c = ["a1", "a2", "a3", "a4"]  # arrival runway exits
-    d = "17ra"                # departure entry node (same all ac)
-    #b = ["p2", "p3", "p4", "p5"]
-    
-    # route_edges = {
-    #     row["name"]: row["edges"]
-    #     for _, row in R.iterrows()
-    # }
+    L = [("a1","p2"), ("a2","p3"), ("a3","p4"), ("a4","p5")]    # Exit taxiways of arrival runway
+    a = ["l3", "l4", "l5", "l6"]                                # left side departure runway in line with arrival runway exits
+    b = ["17rc", "17rd", "17re", "17rf"]                        # right side departure runway in line with arrival runway exits
+    c = ["a1", "a2", "a3", "a4"]                                # arrival runway exits
+    d = "17ra"                                                  # departure entry node (same all ac)
 
     route_nodes = {
         row["name"]: set(row["route"])
@@ -242,6 +191,7 @@ def build_model(params):
     Sep_scaled.loc[:, Sep_scaled.columns != "type"] *= params.get("sep_multiplier", 1.0)
     V_scaled.loc[:,   V_scaled.columns != "type"]   *= params.get("vortex_multiplier", 1.0)
 
+    # Initialize U dataset: U[(i,j)] = set of nodes that both aircraft i and j can use (based on their possible routes)
     U = {}
     for i in P_list:
         for j in P_list:
@@ -250,16 +200,15 @@ def build_model(params):
                 nodes_j = P.loc[P["id"] == j, "Upsilon"].iloc[0]
                 U[(i, j)] = nodes_i.intersection(nodes_j)
                 
-
+    # Initialize P_routes: P_routes[i] = list of route names that aircraft i can use
     P_routes = {
         row["id"]: row["routes"]
         for _, row in P.iterrows()
     }
 
-    # Map route name → list of nodes
     route_map = dict(zip(R["name"], R["route"]))
 
-    # Build N[i][p] = route list of p-th possible route for aircraft i
+    # Initialize N dataset: N[i][p] = node at position p in the chosen route of aircraft i (p=1 is first node, etc.)
     N_dict = {
         i: {p: route_map[rname] for p, rname in enumerate(P_routes[i], start=1)}
         for i in P_list
@@ -268,7 +217,7 @@ def build_model(params):
     N.index.name = "i"
     N.columns = [p for p in N.columns]
 
-    # Create model
+    # =========== Build model ===========
     model = gp.Model("test")
 
     # Decision variables
@@ -287,11 +236,7 @@ def build_model(params):
                             if R.loc[r, "name"] in P_routes[P_list[i]]], 
                             vtype=GRB.BINARY, name="Gamma")
 
-
-
-
-    # --- Objective Function ---
-
+    # Objective Function
     model.setObjective(
     gp.quicksum(
         gp.quicksum(
@@ -302,7 +247,7 @@ def build_model(params):
     ),
     GRB.MINIMIZE)
 
-    # --- Constraints ---
+    # =========== Constraints ===========
 
     # Constraint 6: one route
     model.addConstrs(
@@ -389,7 +334,6 @@ def build_model(params):
     )
 
     # Constraint 11 & 12: Overtaking constraints
-    # Loop over all aircraft pairs
     for i in P_list:
         for j in P_list:
             if i == j:
@@ -430,10 +374,11 @@ def build_model(params):
                 edges_i = E[i][r_i]
 
                 for r_j in E[j]:
-                    edges_j = set(E[j][r_j])  # convert to set for fast lookup
+                    edges_j = set(E[j][r_j])
 
                     # Loop over edges in aircraft i's route
                     for (u, v) in edges_i:
+
                         # Check if aircraft j travels the opposite edge (v,u)
                         if (v, u) in edges_j:
                             # Head-on upper bound
@@ -457,15 +402,12 @@ def build_model(params):
                             )
 
     # Constraint 15: not scheduled before estimated touchdown time
-
-
     for j in A:
         for r in P_routes[j]:
             model.addConstr(
                 t[j, first_node(r)] >= P.loc[P["id"] == j, "ETD"].iloc[0] - M * (1 - Gamma[j,r]),
                 name=f"arrival_time_window_{j}_{r}"
             )
-
 
     for i in D:
         for r in P_routes[i]:
@@ -474,43 +416,42 @@ def build_model(params):
                 name=f"departure_time_window_{i}_{r}"
             )
 
-
-    # Constraint 17,18 are not linearized: constraint 19,20 are linearized version
     # Constraint 19: min taxi speed
     for i in P_list:
         for r_i in E[i]:              # aircraft i's possible routes
             for (u, v) in E[i][r_i]:  # edges in route r_i
                 model.addConstr(
                     t[i, v] - t[i, u] <= (length_edge((u, v)) / Suv_min) *
-                    (M -M *(gp.quicksum(Gamma[i, r] 
-                                        for r in routes_with_edge((u, v)))) +
+                    (M - M *(gp.quicksum(Gamma[i, r] 
+                                        for r in routes_with_edge((u, v)) if r in E[i])) +
                     gp.quicksum(Gamma[i, r]
-                                for r in routes_with_edge((u, v)))) ,
+                                for r in routes_with_edge((u, v)) if r in E[i])) ,
                     name=f"min_taxi_speed_{i}_{u}_{v}"
                 )
 
-    # # Constraint 20: constrained by max taxi speed to enforce positive non-zero speed
+    # Constraint 20: constrained by max taxi speed to enforce positive non-zero speed
     for i in P_list:
         for r_i in E[i]:              # aircraft i's possible routes
             for (u, v) in E[i][r_i]:  # edges in route r_i
                 model.addConstr(
                     t[i, v] - t[i, u] >= (length_edge((u, v)) / Suv_max) *
                     (M *(gp.quicksum(Gamma[i, r] 
-                                        for r in routes_with_edge((u, v)))) - M +
+                                        for r in routes_with_edge((u, v)) if r in E[i])) - M +
                     gp.quicksum(Gamma[i, r] 
-                                for r in routes_with_edge((u, v)))) ,
+                                for r in routes_with_edge((u, v)) if r in E[i])) ,
                     name=f"max_taxi_speed_{i}_{u}_{v}"
                 )
-
-    # Constraint 21,22 are non-linear
 
     # Constraint 23  
     for i in P_list:
         for j in P_list:
             if i == j:
                 continue
-            for r_i in E[i]:              # aircraft i's possible routes
-                for (u, v) in E[i][r_i]:  # edges in route r_i
+
+            # Loop over aircraft i's possible routes
+            for r_i in E[i]:         
+                # Loop over edges in route r_i
+                for (u, v) in E[i][r_i]:  
                     if u in U[((i, j))]:
                         model.addConstr(
                             t[j,u] - t[i,u] - (t[i,v] - t[i,u]) * (find_separation(i,j, Sep_scaled) / length_edge((u,v)))
@@ -520,7 +461,8 @@ def build_model(params):
                                             name="sep_situation1_{i}_{j}_{u}_{v}")
                                                                 
             for r_j in E[j]:    
-                for (w,v) in E[j][r_j]: # All possible edges in routes of j
+                # Loop over all possible edges in routes of j
+                for (w,v) in E[j][r_j]: 
                     if v in U[((i,j))]: 
                         model.addConstr(
                             t[i,v] - t[j,v] - (t[j,v] - t[j, w]) * find_separation(i,j, Sep_scaled) / length_edge((w, v)) >=
@@ -535,7 +477,7 @@ def build_model(params):
             if i == j:
                 continue
 
-            # --- Add the constraint if both are departures ---
+            # Add the constraint if both are departures
             model.addConstr(
                 t[j,d] - t[i, d] - find_vortex_separation(i, j, V_scaled) >=
                 - (1 - rho[i, j]) * M,
@@ -598,10 +540,14 @@ def build_model(params):
                     name=f"runway_crossing_consistency_{i}_{j}"
                 )
 
-    model.setParam(gp.GRB.Param.DualReductions, 0)
-    model.Params.OutputFlag = 1  # just to make sure logging is on
 
+    # =========== Optimize model ===========
+    model.setParam(gp.GRB.Param.DualReductions, 0)
+    model.Params.OutputFlag = 1
     model.optimize()
+
+
+    # =========== Print model results ===========
     status = model.status
     print("Status:", model.status)
     print("Status name:", {2:"OPTIMAL", 3:"INFEASIBLE", 4:"INF_OR_UNBD", 5:"UNBOUNDED", 9:"TIME_LIMIT"}.get(model.status, "OTHER"))
@@ -631,11 +577,12 @@ def build_model(params):
             if abs(v.UnbdRay) > 1e-10:
                 print(v.varName, v.UnbdRay)
 
-    
+
+    # =========== Document model results ===========
     handles = {
     "Gamma": Gamma,
     "t": t,
-    # "Z": {key : var.X for key, var in Z.items()},
+    "Z": {key : var.X for key, var in Z.items()},
     "R": R
     }
 
@@ -655,6 +602,7 @@ with open("solution_variables.txt", "w") as f:
     for var in model.getVars():
         f.write(f"{var.varName}: {var.X}\n")
 
+# Function to export the solution to an Excel file
 def export_solution(model, handles, P, R, filename="solution_output.xlsx"):
     Gamma = handles["Gamma"]
     t = handles["t"]
@@ -665,7 +613,7 @@ def export_solution(model, handles, P, R, filename="solution_output.xlsx"):
     writer = pd.ExcelWriter(filename, engine="xlsxwriter")
 
     for acft in P["id"]:
-        # --- 1. Identify chosen route ---
+        # Identify chosen route
         chosen_route = None
         for r in P.loc[P["id"] == acft, "routes"].iloc[0]:
             if Gamma[acft, r].X > 0.5:
@@ -673,15 +621,14 @@ def export_solution(model, handles, P, R, filename="solution_output.xlsx"):
                 break
 
         if chosen_route is None:
-            # Should never happen, but safe fallback
             df = pd.DataFrame({"ERROR": ["No route chosen"]})
             df.to_excel(writer, sheet_name=acft, index=False)
             continue
 
-        # --- 2. Get nodes of chosen route ---
+        # Get nodes of chosen route
         nodes = route_map[chosen_route]
 
-        # --- 3. Extract times at those nodes ---
+        # Extract times at those nodes
         rows = []
         for node in nodes:
             var = t.get((acft, node))
@@ -697,13 +644,11 @@ def export_solution(model, handles, P, R, filename="solution_output.xlsx"):
         writer.sheets[acft].write(0, 0, f"Chosen route: {chosen_route}")
 
     writer.close()
-    print(f"\n✔️ Solution exported to: {filename}\n")
+    print(f"\n Solution exported to: {filename}\n")
     return
 
-
+# Export the solution to an Excel file
 export_solution(model, handles, P, handles["R"])
-
-
 
 # For sensitivity analysis
 __all__ = [
@@ -714,3 +659,4 @@ __all__ = [
 ]
 
 
+# ========= End of code ================

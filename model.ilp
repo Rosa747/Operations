@@ -1,18 +1,22 @@
 \ Model test_copy
 \ LP format - for model browsing. Use MPS format to capture full model detail.
-\ Signature: 0x55296dbbaeb86e6
+\ Signature: 0xabb88b85b5a475bb
 Minimize
  
 Subject To
  one_route_for_aircraft[AC_A_1]: Gamma[AC_A_1,route_arr_1a]
-   + Gamma[AC_A_1,route_arr_2a] = 1
+   + Gamma[AC_A_1,route_arr_1b] + Gamma[AC_A_1,route_arr_2a]
+   + Gamma[AC_A_1,route_arr_2b] = 1
  max_taxi_speed_AC_A_1_p3_p4: t[AC_A_1,p4] - t[AC_A_1,p3]
-   - 259205.4075208704 Gamma[AC_A_1,route_arr_1a] >= -259179.4895719132
+   - 259205.4075208704 Gamma[AC_A_1,route_arr_1a]
+   - 259205.4075208704 Gamma[AC_A_1,route_arr_1b] >= -259179.4895719132
  max_taxi_speed_AC_A_1_a3_p4: t[AC_A_1,p4] - t[AC_A_1,a3]
-   - 204919.8673995223 Gamma[AC_A_1,route_arr_2a] >= -204899.3774617762
- exit_capacity_AC_A_1_AC_A_2_('a3',_'p4'): t[AC_A_1,p4] <= 15
+   - 204919.8673995223 Gamma[AC_A_1,route_arr_2a]
+   - 204919.8673995223 Gamma[AC_A_1,route_arr_2b] >= -204899.3774617762
+ exit_capacity_AC_A_1_AC_A_2_('a3',_'p4'): t[AC_A_1,p4] <= 19.5
 Bounds
  t[AC_A_1,p4] free
 Binaries
- Gamma[AC_A_1,route_arr_1a] Gamma[AC_A_1,route_arr_2a]
+ Gamma[AC_A_1,route_arr_1a] Gamma[AC_A_1,route_arr_1b]
+ Gamma[AC_A_1,route_arr_2a] Gamma[AC_A_1,route_arr_2b]
 End

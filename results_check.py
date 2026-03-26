@@ -2,8 +2,8 @@ import pandas as pd
 from openpyxl import load_workbook
 
 
-aircrafts_arr = pd.read_excel('flight_schedule_test.xlsx', sheet_name='A', header = 0)
-aircrafts_dep = pd.read_excel('flight_schedule_test.xlsx', sheet_name='D', header = 0)
+aircrafts_arr = pd.read_excel('flight_schedule.xlsx', sheet_name='A', header = 0)
+aircrafts_dep = pd.read_excel('flight_schedule.xlsx', sheet_name='D', header = 0)
 aircrafts = pd.concat([aircrafts_arr, aircrafts_dep], ignore_index=True)["id"]
 
 route_times_df = pd.DataFrame()
@@ -43,6 +43,6 @@ for aircraft_id in aircrafts:
 # make chosen_route the first column
 cols = ["chosen_route"] + [col for col in nodes_times_df.columns if col != "chosen_route"]
 nodes_times_df = nodes_times_df[cols]
-print(nodes_times_df)
+print(nodes_times_df.to_string())
 
 # Nieuwe route met gate onderaan voor om taxien in plaats van langzamer

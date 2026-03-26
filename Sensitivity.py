@@ -1,10 +1,34 @@
+"""
+This script can be run to conduct a sensitvity analysis.
+Authors:
+
+Jim Ruysenaars      (5309980)
+Lynn Vorgers        (5089301)
+Rosa de Jong        (5016495)
+
+"""
+
+
 import pandas as pd
 import matplotlib.pyplot as plt
 
-from Operations_assignment import (
-    build_model,
-    get_first_node
-)
+from Operations_assignment import build_model
+#from Operations_assignment import get_first_node
+
+
+def get_first_node(aircraft_id, P, R, Gamma):
+    """
+    Returns the first node of the chosen route for the aircraft.
+    """
+    # Find the chosen route for this aircraft
+    chosen_route = None
+    for r in P.loc[P["id"] == aircraft_id, "routes"].iloc[0]:
+        if Gamma[aircraft_id, r].X > 0.5:
+            chosen_route = r
+            break
+    if chosen_route is not None:
+        return R.loc[R["name"] == chosen_route, "route"].iloc[0][0]
+
 
 def extract_solution(handles, P, P_list):
     """Extract aircraft route choices, times, delays, etc."""
@@ -39,7 +63,9 @@ def extract_solution(handles, P, P_list):
                 sched_time = P.loc[P["id"] == ac, "PBT"].iloc[0]
 
             start_node = get_first_node(ac, P, R, handles["Gamma"])
-
+            print(f"handles gamma for ac {ac}: {handles['Gamma']}")
+            print(f"Start node for aircraft {ac}: {start_node}")
+            print(f"start node time: {node_times[start_node]}, sched_time: {sched_time}")
             delay = node_times[start_node] - sched_time
         else:
             delay = None
@@ -99,6 +125,7 @@ def plot_sensitivity(df, param_name):
 
     plt.figure(figsize=(7, 4))
     plt.plot(pivot.index, pivot.values, marker="o")
+    
     plt.xlabel(param_name)
     plt.ylabel("Objective Value")
     plt.grid(True)
@@ -106,6 +133,52 @@ def plot_sensitivity(df, param_name):
     plt.tight_layout()
     plt.savefig(f"sensitivity_plot_{param_name}.png")
     plt.show()
+
+def plot_sensitivity(df, param_name):
+    """Plot objective value vs parameter value with middle value highlighted."""
+    
+    pivot = df.groupby("value")["objective"].mean().sort_index()
+
+
+
+    x_vals = pivot.index.tolist()
+    y_vals = pivot.values.tolist()
+
+    plt.figure(figsize=(7, 4))
+    
+    # Plot full curve
+    plt.plot(x_vals, y_vals, marker="o")
+
+    # Find middle index
+    mid_index = len(x_vals) // 2
+    mid_x = x_vals[mid_index]
+    mid_y = y_vals[mid_index]
+
+    # Highlight middle value in red
+    plt.plot(mid_x, mid_y, marker="o", markersize=10, color="red")
+
+    plt.xlabel(param_name)
+
+    if param_name == "Tidep":
+        plt.xlabel(f"Departure duration [seconds]")
+        plt.title(r"Sensitivity of Objective to $T_{i,{dep}}$")
+    elif param_name == "separation_multiplier":
+        plt.xlabel(f"Separation Minima Multiplier (% of standard)")
+        plt.title(r"Sensitivity of Objective to $Sep$")
+    elif param_name == "vortex_multiplier":
+        plt.xlabel(f"Vortex Separation Multiplier (% of standard)")
+        plt.title(r"Sensitivity of Objective to $V_{i, j}$")
+    elif param_name == "taxi_speed_multiplier":
+        plt.xlabel(f"Taxi Speed Multiplier (% of standard)")
+        plt.title(r"Sensitivity of Objective to $S^{uv}$")
+
+    plt.ylabel("Objective Value [seconds]")
+    plt.grid(True)
+    
+    #plt.legend()
+    plt.tight_layout()
+    plt.savefig(f"sensitivity_plot_{param_name}.png")
+    #plt.show()
 
 
 # Run sensitivity
@@ -115,26 +188,26 @@ if __name__ == "__main__":
         "separation_multiplier": 1.0,
         "vortex_multiplier": 1.0,
         "taxi_speed_multiplier": 1.0,
-        "Tidep": 55,
+        "Tidep": 50,
         "M": 1e4
     }
 
     # 1. Sensitivity: Separation Minima Sep
-    sep_values = [0.8, 1.0, 1.2, 1.4]
+    sep_values = [0.8, 0.9, 1.0, 1.1, 1.2]
     df_sep = run_sensitivity("separation_multiplier", sep_values, base_params)
     plot_sensitivity(df_sep, "separation_multiplier")
 
     # 2. Sensitivity: Separation Minima V
-    V_values = [0.8, 1.0, 1.2, 1.4]
+    V_values = [0.8, 0.9, 1.0, 1.1, 1.2]
     df_V = run_sensitivity("vortex_multiplier", V_values, base_params)
     plot_sensitivity(df_V, "vortex_multiplier")
 
     # 3. Sensitivity: Taxi Speed
-    speed_values = [0.8, 1.0, 1.2]
+    speed_values = [0.8, 0.9, 1.0, 1.1, 1.2]
     df_speed = run_sensitivity("taxi_speed_multiplier", speed_values, base_params)
     plot_sensitivity(df_speed, "taxi_speed_multiplier")
 
     # 4. Sensitivity: Departure Window (Tidep)
-    tidep_values = [40, 55, 70]
+    tidep_values = [30, 40, 50, 60, 70]
     df_tidep = run_sensitivity("Tidep", tidep_values, base_params)
     plot_sensitivity(df_tidep, "Tidep")
